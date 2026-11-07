@@ -34,6 +34,7 @@ class TMDBService:
         self.timeout = httpx.Timeout(4.0, connect=2.0)
         self._client: httpx.AsyncClient | None = None
         self._semaphore = asyncio.Semaphore(8)
+        self.trailers: Dict[str, Any] = {}   # in-memory trailer cache
 
     # ── Lifecycle ────────────────────────────────────────────────
     def _get_client(self) -> httpx.AsyncClient:
@@ -132,6 +133,36 @@ class TMDBService:
                 if meta:
                     r["cached"] = slim(meta)
         return items
+
+    async def get_trailer(self, tmdb_id: int) -> Dict[str, Any] | None:
+        """Best YouTube trailer for a movie: {key, name, site}. Cached per movie."""
+        cache_key = f"trailer:{tmdb_id}"
+        if cache_key in self.trailers:
+            return self.trailers[cache_key]
+        if not self.api_key:
+            return None
+        try:
+            async with self._semaphore:
+                response = await self._get_client().get(
+                    f"{self.base_url}/movie/{tmdb_id}/videos", params={"api_key": self.api_key}
+                )
+            if response.status_code == 404:
+                self.trailers[cache_key] = None
+                return None
+            response.raise_for_status()
+            videos = [v for v in response.json().get("results", []) if v.get("site") == "YouTube" and v.get("key")]
+        except Exception:
+            return None  # transient: don't cache
+
+        def rank(v):
+            return (v.get("type") == "Trailer", bool(v.get("official")), v.get("size") or 0)
+
+        best = max(videos, key=rank) if videos else None
+        trailer = {"key": best["key"], "name": best.get("name", "Trailer"), "site": "YouTube"} if best else None
+        if len(self.trailers) > 5000:
+            self.trailers.clear()
+        self.trailers[cache_key] = trailer
+        return trailer
 
     def update_cache(self, tmdb_id: int, data: dict):
         self.cache[str(tmdb_id)] = data

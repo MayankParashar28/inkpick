@@ -40,3 +40,6 @@ class CinemaService:
 
     def get_item(self, item_id):
         return self.movie_engine.get_item(item_id)
+
+    def suggest(self, query: str, limit: int = 8):
+        return self.movie_engine.suggest(query, limit=limit)

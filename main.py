@@ -101,7 +101,8 @@ async def cache_headers(request: Request, call_next):
                 "no-cache" if path.endswith(".html") else "public, max-age=86400"
             )
         elif path.startswith(("/api/v1/discover/", "/api/v1/recommend/", "/api/v1/search/",
-                              "/api/v1/item/", "/api/v1/tmdb/movie/", "/api/v1/songs/mood")):
+                              "/api/v1/item/", "/api/v1/tmdb/movie/", "/api/v1/songs/mood",
+                              "/api/v1/suggest/")):
             response.headers["Cache-Control"] = "public, max-age=300"
     return response
 
@@ -141,6 +142,9 @@ async def health():
         "categories": registry.list_categories(),
         "tmdb_configured": bool(tmdb_service.api_key),
         "tmdb_cached_titles": len(tmdb_service.cache),
+        "collaborative_model": bool(
+            getattr(app.state, "cinema_service", None) and app.state.cinema_service.collab_engine.ready
+        ),
         "uptime_s": round(time.time() - getattr(app.state, "started_at", time.time()), 1),
     }
 
@@ -178,6 +182,27 @@ async def universal_search(
         return {"results": [], "suggestion": None}
     results, suggestion = engine.search(q, limit=limit)
     return {"results": await maybe_enrich(domain, results), "suggestion": suggestion}
+
+
+@app.get("/api/v1/suggest/{domain}")
+async def suggest(
+    domain: str,
+    q: str = Query(..., min_length=1, max_length=100),
+    limit: int = Query(8, ge=1, le=15),
+):
+    """Type-ahead suggestions (titles only, no TMDB enrichment — must be instant)."""
+    engine = get_engine_or_404(domain)
+    q = sanitize_query(q)
+    if len(q) < 2:
+        return {"results": []}
+    return {"results": engine.suggest(q, limit=limit)}
+
+
+@app.get("/api/v1/movies/{tmdb_id}/trailer")
+async def movie_trailer(tmdb_id: int):
+    """🎞️ Best YouTube trailer for a movie (needs TMDB_API_KEY)."""
+    trailer = await tmdb_service.get_trailer(tmdb_id)
+    return {"trailer": trailer, "tmdb_configured": bool(tmdb_service.api_key)}
 
 
 @app.get("/api/v1/movies/search")

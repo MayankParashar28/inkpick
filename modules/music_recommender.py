@@ -123,6 +123,16 @@ class MusicEngine:
         idx = self.id_to_idx.get(song_id)
         return None if idx is None else self._format(self.df.iloc[idx].to_dict())
 
+    def suggest(self, query: str, limit: int = 8) -> list[dict]:
+        """Fast type-ahead: titles starting with the query first, then containing it."""
+        q = query.lower().strip()
+        col = self.df["name_norm"]
+        starts = self.df[col.str.startswith(q, na=False)]
+        if len(starts) < limit:
+            contains = self.df[col.str.contains(q, na=False, regex=False) & ~col.str.startswith(q, na=False)]
+            starts = pd.concat([starts, contains.head(limit - len(starts))])
+        return [self._format(row) for row in starts.head(limit).to_dict("records")]
+
     def discover(self, limit: int = 24, offset: int = 0) -> list[dict]:
         return [self._format(row) for row in self.df.iloc[offset: offset + limit].to_dict("records")]
 

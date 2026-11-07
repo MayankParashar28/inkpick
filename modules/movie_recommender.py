@@ -141,6 +141,16 @@ class MovieEngine:
             reasons.append(f"Same era ({int(ry) // 10 * 10}s)")
         return reasons or ["Similar themes & tags"]
 
+    def suggest(self, query: str, limit: int = 8) -> list[dict]:
+        """Fast type-ahead: titles starting with the query first, then containing it."""
+        q = query.lower().strip()
+        col = self.df["title_norm"]
+        starts = self.df[col.str.startswith(q, na=False)]
+        if len(starts) < limit:
+            contains = self.df[col.str.contains(q, na=False, regex=False) & ~col.str.startswith(q, na=False)]
+            starts = pd.concat([starts, contains.head(limit - len(starts))])
+        return [self._format(row) for row in starts.head(limit).to_dict("records")]
+
     def discover(self, limit: int = 24, offset: int = 0) -> list[dict]:
         """Return a deterministic page of movies from the discovery pool."""
         sample = self.discover_pool[offset: offset + limit]

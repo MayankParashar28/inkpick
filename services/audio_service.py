@@ -33,3 +33,6 @@ class AudioService:
 
     def mood(self, **kwargs):
         return self.engine.mood(**kwargs)
+
+    def suggest(self, query: str, limit: int = 8):
+        return self.engine.suggest(query, limit=limit)

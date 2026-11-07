@@ -31,3 +31,6 @@ class EduService:
 
     def get_item(self, item_id):
         return self.engine.get_item(item_id)
+
+    def suggest(self, query: str, limit: int = 8):
+        return self.engine.suggest(query, limit=limit)
