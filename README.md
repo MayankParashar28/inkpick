@@ -35,6 +35,14 @@ Inkpick is a multi-domain content discovery platform delivering sub-50ms recomme
 | Audio | Custom Metadata | — |
 | Education | Udemy Catalog | — |
 
+**Highlights**
+- ✨ **More like this** on every item, with a plain-English *“Why this pick?”* (shared genres, same era/franchise, same artist, similar tempo/energy, shared course topics)
+- 📒 **My Sketchbook**: tap ♡ to save movies, songs and courses (kept in your browser)
+- 🔗 **Shareable links**: every item has its own URL, e.g. `/#/movies/1`, `/#/songs/<spotifyId>`
+- 🎚️ **Mood mixer**: find songs by energy, danceability and tempo, or pick Chill / Focus / Workout / Party
+- 🎲 **Surprise me**: a random pick from the current category
+- 🤖 **Sketchy**: a lit, animated 3D robot mascot, lazy-loaded so it never slows the page
+
 ---
 
 ## Architecture
@@ -198,6 +206,8 @@ All endpoints live under `/api/v1`. `{domain}` is one of `movies`, `songs`, `cou
 | `GET` | `/recommend/{domain}/{item_id}?limit=12&genre=...` | Similar items for one catalog item |
 | `GET` | `/movies/recommend/{movie_id}?mode=hybrid&genre=...` | Movie recs with `content`, `collaborative` or `hybrid` mode |
 | `GET` | `/surprise/{domain}` | 🎲 One random pick |
+| `GET` | `/item/{domain}/{item_id}` | One item by ID (powers shareable links) |
+| `GET` | `/songs/mood?energy=0.8&danceability=0.7&tempo=128` | 🎚️ Songs closest to a target mood (all params optional) |
 | `GET` | `/tmdb/movie/{tmdb_id}` | Cached TMDB metadata proxy (hides the API key) |
 | `POST` | `/tmdb/batch` | `{"ids": [862, 8844]}` → metadata for up to 50 movies |
 | `GET` | `/health` | Status, active categories, TMDB cache size |
@@ -211,7 +221,11 @@ curl "http://localhost:8000/api/v1/recommend/movies/1?limit=3"
 {
   "category": "movies",
   "recommendations": [
-    { "movieId": 3114, "title": "Toy Story 2 (1999)", "genres": ["Adventure", "Animation", "Children", "Comedy", "Fantasy"], "tmdbId": 863, "similarity": 0.98, "mode": "hybrid" }
+    {
+      "movieId": 3114, "title": "Toy Story 2 (1999)", "tmdbId": 863, "similarity": 0.98,
+      "genres": ["Adventure", "Animation", "Children", "Comedy", "Fantasy"],
+      "reasons": ["Both Adventure + Animation + Children", "Same franchise", "Same era (1990s)"]
+    }
   ]
 }
 ```

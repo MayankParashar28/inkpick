@@ -27,6 +27,10 @@
     padding: 0;
 }
 
+[hidden] {
+    display: none !important;
+}
+
 body {
     background-color: var(--bg);
     background-image: radial-gradient(var(--muted) 1px, transparent 1px);
@@ -201,6 +205,7 @@ main {
 
 /* ── Card ── */
 .card {
+    position: relative;
     cursor: pointer;
     transition: var(--transition);
     background: var(--paper-white);
@@ -458,7 +463,7 @@ main {
 /* ── Detail View ── */
 .detail-view {
     margin-bottom: 60px;
-    display: none;
+    display: block;
     background: var(--post-it-yellow);
     border: var(--border-width) solid var(--foreground);
     padding: 40px;
@@ -939,4 +944,263 @@ main {
 
 .match-score {
     white-space: nowrap;
+}
+
+/* ── Links / inputs ── */
+a.logo {
+    text-decoration: none;
+}
+
+.search-box input::-webkit-search-cancel-button {
+    cursor: pointer;
+}
+
+.card:focus-visible,
+.hero-card:focus-visible,
+.pill:focus-visible,
+.ghost-btn:focus-visible,
+.det-close:focus-visible,
+.save-btn:focus-visible,
+.nav-link:focus-visible {
+    outline: 3px dashed var(--secondary);
+    outline-offset: 4px;
+}
+
+/* ── Saved sketchbook ── */
+.saved-count {
+    display: inline-block;
+    min-width: 22px;
+    padding: 0 6px;
+    margin-left: 4px;
+    font-size: 0.85rem;
+    line-height: 20px;
+    text-align: center;
+    color: #fff;
+    background: var(--accent);
+    border: 2px solid var(--foreground);
+    border-radius: 12px 4px 12px 4px;
+    transform: rotate(-4deg);
+}
+
+.save-btn {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    z-index: 6;
+    width: 40px;
+    height: 40px;
+    display: grid;
+    place-items: center;
+    font-size: 1.3rem;
+    line-height: 1;
+    color: var(--accent);
+    background: var(--paper-white);
+    border: 2px solid var(--foreground);
+    border-radius: 50% 45% 50% 40%;
+    box-shadow: 2px 2px 0 var(--foreground);
+    cursor: pointer;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.save-btn:hover {
+    transform: scale(1.1) rotate(-6deg);
+}
+
+.save-btn[aria-pressed="true"] {
+    background: var(--post-it-yellow);
+}
+
+/* ── Match reasons ── */
+.card-why {
+    margin-top: 8px;
+    font-family: var(--font-body);
+    font-size: 0.9rem;
+    line-height: 1.3;
+    color: var(--secondary);
+    border-top: 1px dashed var(--muted);
+    padding-top: 6px;
+}
+
+.detail-why {
+    list-style: none;
+    margin: 0 0 8px;
+    padding: 12px 16px;
+    background: var(--paper-white);
+    border: 2px dashed var(--secondary);
+    border-radius: var(--wobbly-md);
+    font-family: var(--font-body);
+    color: var(--secondary);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 16px;
+}
+
+.detail-why .why-title {
+    width: 100%;
+    font-family: var(--font-header);
+    font-weight: 700;
+    color: var(--foreground);
+}
+
+/* ── Detail actions ── */
+.detail-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 16px;
+}
+
+.ghost-btn {
+    font-family: var(--font-header);
+    font-weight: 700;
+    font-size: 1.05rem;
+    min-height: 44px;
+    padding: 10px 20px;
+    background: var(--paper-white);
+    border: 2px solid var(--foreground);
+    border-radius: var(--wobbly-md);
+    box-shadow: 3px 3px 0 var(--foreground);
+    cursor: pointer;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.ghost-btn:hover {
+    transform: translate(-1px, -1px);
+    box-shadow: 5px 5px 0 var(--foreground);
+}
+
+.ghost-btn[aria-pressed="true"] {
+    color: var(--accent);
+    background: var(--paper-white);
+}
+
+.det-close {
+    position: absolute;
+    top: 14px;
+    right: 18px;
+    z-index: 11;
+    width: 44px;
+    height: 44px;
+    font-size: 1.3rem;
+    background: var(--paper-white);
+    border: 2px solid var(--foreground);
+    border-radius: 50% 40% 50% 45%;
+    box-shadow: 2px 2px 0 var(--foreground);
+    cursor: pointer;
+}
+
+/* ── Mood mixer ── */
+.mood-mixer {
+    margin: -16px 0 40px;
+    padding: 24px 28px;
+    background: var(--paper-white);
+    border: var(--border-width) solid var(--foreground);
+    border-radius: 30px 10px 40px 10px / 10px 40px 10px 30px;
+    box-shadow: var(--shadow-hard);
+}
+
+.mood-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px 24px;
+    margin-bottom: 20px;
+}
+
+.mood-title {
+    font-size: 1.6rem;
+}
+
+.mood-presets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.mood-presets .pill {
+    padding: 6px 16px;
+}
+
+.mood-sliders {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 20px 32px;
+}
+
+.mood-slider {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-family: var(--font-header);
+    font-weight: 700;
+}
+
+.mood-slider output {
+    color: var(--secondary);
+}
+
+.mood-slider input[type="range"] {
+    width: 100%;
+    accent-color: var(--accent);
+    cursor: pointer;
+}
+
+@media (max-width: 768px) {
+    .mood-mixer {
+        padding: 18px 16px;
+    }
+
+    .nav-links {
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 12px 20px;
+    }
+
+    .detail-actions {
+        justify-content: center;
+    }
+}
+
+/* ── Small screens: give content the room ── */
+@media (max-width: 768px) {
+    nav {
+        position: relative;   /* a 300px sticky header eats a third of a phone screen */
+        padding: 16px;
+        gap: 10px;
+    }
+
+    .logo {
+        font-size: 1.6rem;
+    }
+
+    .nav-link {
+        font-size: 1rem;
+    }
+
+    main {
+        padding: 24px 16px;
+    }
+
+    .detail-view {
+        padding: 56px 18px 24px;
+        transform: none;
+    }
+
+    .hero-card {
+        padding: 20px;
+    }
+
+    .discovery-grid {
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+        gap: 20px;
+    }
+
+    .similar-grid {
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    }
+
+    .card-title {
+        font-size: 1.05rem;
+    }
 }
