@@ -188,44 +188,33 @@ Interactive docs (Swagger UI) at `http://localhost:8000/docs`.
 
 ## API Reference
 
-### `GET /recommend/{domain}`
+All endpoints live under `/api/v1`. `{domain}` is one of `movies`, `songs`, `courses`.
+`limit` is clamped to `1–50`.
 
-Returns ranked recommendations for a given item within a domain.
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `domain` | `path`  | One of `cinema`, `audio`, `education` |
-| `item_id` | `query`  | Catalog item identifier |
-| `top_k` | `query`  | Number of results (default: `10`) |
-| `mode` | `query`  | `content`, `collaborative`, or `hybrid` (default: `hybrid`) |
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/discover/{domain}?limit=24&offset=0` | Paginated home-page feed |
+| `GET` | `/search/{domain}?q=...&limit=24` | Title/artist/instructor search (genre names work for movies) with fuzzy "did you mean" fallback |
+| `GET` | `/recommend/{domain}/{item_id}?limit=12&genre=...` | Similar items for one catalog item |
+| `GET` | `/movies/recommend/{movie_id}?mode=hybrid&genre=...` | Movie recs with `content`, `collaborative` or `hybrid` mode |
+| `GET` | `/surprise/{domain}` | 🎲 One random pick |
+| `GET` | `/tmdb/movie/{tmdb_id}` | Cached TMDB metadata proxy (hides the API key) |
+| `POST` | `/tmdb/batch` | `{"ids": [862, 8844]}` → metadata for up to 50 movies |
+| `GET` | `/health` | Status, active categories, TMDB cache size |
 
 **Example**
 ```bash
-curl "http://localhost:8000/recommend/cinema?item_id=tt0111161&top_k=5&mode=hybrid"
+curl "http://localhost:8000/api/v1/recommend/movies/1?limit=3"
 ```
 
-**Response**
 ```json
 {
-  "domain": "cinema",
-  "query_item": "tt0111161",
-  "mode": "hybrid",
-  "results": [
-    { "item_id": "tt0068646", "title": "The Godfather", "score": 0.94 },
-    ...
-  ],
-  "latency_ms": 38
+  "category": "movies",
+  "recommendations": [
+    { "movieId": 3114, "title": "Toy Story 2 (1999)", "genres": ["Adventure", "Animation", "Children", "Comedy", "Fantasy"], "tmdbId": 863, "similarity": 0.98, "mode": "hybrid" }
+  ]
 }
 ```
-
-### `GET /search/{domain}`
-
-Fuzzy-search the catalog with Levenshtein fallback.
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `domain` | `path`  | Target domain |
-| `q` | `query`  | Search query string |
 
 ---
 

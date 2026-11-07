@@ -17,8 +17,8 @@
     <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
     
     <!-- Hand-Drawn Styles -->
-    <link rel="stylesheet" href="/static/css/style.css?v=8">
-    <link rel="stylesheet" href="/static/css/mascot.css?v=8">
+    <link rel="stylesheet" href="/static/css/style.css?v=9">
+    <link rel="stylesheet" href="/static/css/mascot.css?v=9">
 </head>
 <body>
 
@@ -69,6 +69,7 @@
         <!-- Genre Pills -->
         <section class="pill-bar-container">
             <div id="genre-pills" class="genre-pills"></div>
+            <button id="btn-surprise" class="btn-surprise" type="button" title="Show a random pick">🎲 Surprise me</button>
         </section>
 
         <!-- Detail View -->
@@ -83,12 +84,16 @@
                     <div class="detail-meta" id="det-meta"></div>
                     <p class="detail-desc" id="det-desc"></p>
                     <div class="detail-actions">
-                        <a id="det-play-link" target="_blank" class="play-btn">
+                        <a id="det-play-link" target="_blank" rel="noopener noreferrer" class="play-btn">
                             <i data-lucide="play-circle"></i>
                             <span id="det-play-text">Sketching Link...</span>
                         </a>
                     </div>
                 </article>
+            </div>
+            <div id="similar-wrap" class="similar-wrap" style="display:none;">
+                <h2 class="grid-header">More like this</h2>
+                <div id="similar-results" class="discovery-grid similar-grid" aria-live="polite"></div>
             </div>
         </section>
 
@@ -107,6 +112,6 @@
     </main>
 
     <!-- Application Logic -->
-    <script src="/static/js/app.js?v=hub_fix_10"></script>
+    <script src="/static/js/app.js?v=hub_fix_11"></script>
 </body>
 </html>

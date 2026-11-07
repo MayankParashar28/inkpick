@@ -865,3 +865,78 @@ main {
     box-shadow: 6px 6px 0px var(--foreground);
 }
 
+
+/* ── Surprise Me ── */
+.pill-bar-container {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 16px;
+}
+
+.btn-surprise {
+    font-family: var(--font-header);
+    font-size: 1.05rem;
+    background: var(--post-it-yellow);
+    border: 2px solid var(--foreground);
+    border-radius: var(--wobbly-md);
+    padding: 8px 20px;
+    cursor: pointer;
+    box-shadow: 4px 4px 0px var(--foreground);
+    transition: var(--transition);
+}
+
+.btn-surprise:hover {
+    transform: translate(-2px, -2px) rotate(-1deg);
+    box-shadow: 6px 6px 0px var(--foreground);
+}
+
+.btn-surprise:focus-visible,
+.btn-load-more:focus-visible {
+    outline: 3px dashed var(--secondary);
+    outline-offset: 3px;
+}
+
+/* ── More Like This ── */
+.similar-wrap {
+    margin-top: 40px;
+    padding-top: 24px;
+    border-top: 2px dashed var(--muted);
+}
+
+.similar-grid {
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 24px;
+}
+
+.similar-grid .card-title {
+    font-size: 1rem;
+}
+
+.similar-empty {
+    font-family: var(--font-body);
+    color: #777;
+}
+
+.match-score {
+    font-family: var(--font-body);
+    color: var(--secondary);
+    font-size: 0.9rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .btn-surprise,
+    .btn-surprise:hover {
+        transition: none;
+        transform: none;
+    }
+}
+
+.similar-grid .card-meta-line {
+    flex-wrap: wrap;
+    gap: 4px 10px;
+}
+
+.match-score {
+    white-space: nowrap;
+}

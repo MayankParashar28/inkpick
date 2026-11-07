@@ -1,6 +1,6 @@
 /**
  * Inkpick — Hand-Drawn Discovery Hub
- * Consolidated & Stabilized — All Bugs Fixed
+ * Consolidated & Stabilized
  */
 
 let currentTab = 'movies';
@@ -10,6 +10,18 @@ const cache = {};
 const CACHE_MAX = 500; // O6: Memory cap
 let discoveryOffset = 0;
 const DISCOVERY_LIMIT = 24;
+let searchSeq = 0;   // Guards against out-of-order search responses
+let similarSeq = 0;  // Guards against out-of-order "More like this" responses
+
+// Escape untrusted text before interpolating into HTML (titles come from datasets/APIs)
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
 
 // ── Elements (Resolved in init) ──────────────────────
 let grid, input, detailView, genrePills, spotlightContainer;
@@ -45,12 +57,10 @@ window.addEventListener('DOMContentLoaded', () => {
     try {
         resolveElements();
         if (input) {
-            console.log("🖋️ hub: Input listener attached successfully.");
             input.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') {
                     e.preventDefault();
                     const query = input.value.trim();
-                    console.log("🔍 hub: Running handleSearch for", query);
                     handleSearch(query);
                 }
             });
@@ -73,7 +83,7 @@ window.addEventListener('DOMContentLoaded', () => {
             errGrid.innerHTML = `
                 <div class="empty-state" style="color:var(--accent);">
                     <h3>⚠️ Hub initialization failure</h3>
-                    <p>${err.message}</p>
+                    <p>${escapeHtml(err.message)}</p>
                     <button onclick="location.reload()">Reload Hub</button>
                 </div>`;
         }
@@ -114,6 +124,7 @@ function internalSwitchTab(tab, el) {
     }
 
     if (detailView) detailView.style.display = 'none';
+    similarSeq++;
     discoveryOffset = 0; // Reset offset on tab switch
     renderPills();
     fetchDiscovery();
@@ -156,7 +167,6 @@ function initShortcuts() {
 }
 
 function showSkeletons(count = 12) {
-    console.log(`🖋️ Sketching ${count} skeletons...`);
     if (!grid) return;
     
     let html = '';
@@ -182,7 +192,6 @@ function showSkeletons(count = 12) {
 async function fetchDiscovery(append = false) {
     const loadMoreWrap = document.getElementById('load-more-wrap');
     if (!append) {
-        console.log("🎨 Hand-drawing discovery...");
         discoveryOffset = 0;
         showSkeletons(12);
         if (loadMoreWrap) loadMoreWrap.style.display = 'none';
@@ -232,40 +241,80 @@ async function fetchDiscovery(append = false) {
         }
     } catch (err) {
         console.error("Discovery error:", err);
-        grid.innerHTML = `<div class="empty-state" style="color:var(--accent);">⚠️ Pencil broke: ${err.message}</div>`;
+        if (append) {
+            discoveryOffset = Math.max(0, discoveryOffset - DISCOVERY_LIMIT);
+            triggerSketchy3D("Couldn't sketch more right now. Try again! ✏️", "Wave");
+        } else {
+            grid.innerHTML = `<div class="empty-state" style="color:var(--accent);">⚠️ Pencil broke: ${escapeHtml(err.message)}</div>`;
+        }
     }
 }
 
 // Bind Load More
 document.getElementById('btn-load-more')?.addEventListener('click', () => fetchDiscovery(true));
+document.getElementById('btn-surprise')?.addEventListener('click', surpriseMe);
+
+// ✨ Surprise Me: open a random pick from the current tab
+async function surpriseMe() {
+    triggerSketchy3D("Rolling the dice... 🎲", "Jump");
+    try {
+        const res = await fetch(`/api/v1/surprise/${currentTab}`);
+        if (!res.ok) throw new Error('No surprise available');
+        const { result } = await res.json();
+        if (!result) return;
+        if (result.cached && result.tmdbId > 0) cache[result.tmdbId] = result.cached;
+        featuredItems.set(String(result.movieId || result.spotifyId), result);
+        selectItem(result);
+    } catch (err) {
+        console.error('Surprise error:', err);
+        triggerSketchy3D("My dice rolled under the couch. Try again! 🙈", "Wave");
+    }
+}
 
 
 async function handleSearch(q) {
     if (q.length < 2) return;
+    const seq = ++searchSeq;
+    const tab = currentTab;
     triggerSketchy3D("Pencil at the ready... 🖋️", "Walking");
-    console.log("🔍 hub: Searching for", q, "in", currentTab);
     try {
-        const res = await fetch(`/api/v1/search/${currentTab}?q=${encodeURIComponent(q)}&limit=24`);
+        const res = await fetch(`/api/v1/search/${tab}?q=${encodeURIComponent(q)}&limit=24`);
         if (!res.ok) throw new Error("Search API failed");
         const data = await res.json();
-        const items = data.results || data;
-        console.log("📦 hub: Search results received", items.length);
+        // Ignore stale responses (user typed again or switched tabs)
+        if (seq !== searchSeq || tab !== currentTab) return;
+        const items = data.results || [];
 
+        items.forEach(item => {
+            if (item.cached && item.tmdbId > 0) cache[item.tmdbId] = item.cached;
+        });
         renderItems(items);
+        const loadMoreWrap = document.getElementById('load-more-wrap');
+        if (loadMoreWrap) loadMoreWrap.style.display = 'none';
 
-        if (items.length === 0 && data.suggestion) {
-            triggerSketchy3D(`Did you mean <span style="text-decoration:underline; cursor:pointer; color:var(--secondary);" onclick="applySuggestion('${data.suggestion.replace(/'/g, "\\'")}')">${data.suggestion}</span>?`, "Wave");
-        } else if (currentTab === 'movies') {
+        if (items.length === 0) {
+            if (data.suggestion) {
+                pendingSuggestion = data.suggestion;
+                triggerSketchy3D(`Did you mean <span style="text-decoration:underline; cursor:pointer; color:var(--secondary);" onclick="applySuggestion()">${escapeHtml(data.suggestion)}</span>?`, "Wave");
+            }
+            grid.innerHTML = `
+                <div class="empty-state">
+                    <h3>✍️ No sketches match "${escapeHtml(q)}".</h3>
+                    <p>${data.suggestion ? `Did you mean <a href="#" onclick="applySuggestion(); return false;">${escapeHtml(data.suggestion)}</a>?` : 'Try a different word or hit 🎲 Surprise me.'}</p>
+                </div>`;
+        } else if (tab === 'movies') {
             const uncached = items.filter(i => i.tmdbId > 0 && !cache[i.tmdbId]).map(i => i.tmdbId);
             if (uncached.length > 0) batchFetchMeta(uncached);
         }
     } catch (err) {
         console.error("Search error:", err);
+        if (seq === searchSeq) triggerSketchy3D("Search hit a snag. Try again! ✏️", "Wave");
     }
 }
 
-function applySuggestion(text) {
-    if (input) {
+let pendingSuggestion = null;
+function applySuggestion(text = pendingSuggestion) {
+    if (input && text) {
         input.value = text;
         triggerSketchy3D("Excellent choice!", "Jump");
         handleSearch(text);
@@ -313,30 +362,30 @@ function renderSpotlight(item) {
             (meta && meta.poster_path ? `<img src="${TMDB_POSTER}${meta.poster_path}" alt="">` : generateMovieSketch(item)));
 
     spotlightContainer.innerHTML = `
-        <div class="hero-card ${isCourse ? 'course-hero' : ''}" onclick="selectItemById('${itemId}')">
+        <div class="hero-card ${isCourse ? 'course-hero' : ''}" onclick="selectItemById('${escapeHtml(itemId)}')">
             <div class="masking-tape top-left"></div>
             <div class="masking-tape top-right"></div>
             <div class="hero-img">${image}</div>
             <div class="hero-content">
                 <div class="hero-tag">PICK OF THE DAY</div>
-                <h1 class="hero-title">${item.title}</h1>
-                <p class="hero-desc">${isCourse ? `A top-rated lesson from ${item.album}. Category: ${item.category}` : (!isMusic ? (meta && meta.overview ? meta.overview : 'A classic sketch in the vault...') : `A track from "${item.album || 'Unknown'}" by ${item.artist}.`)}</p>
+                <h1 class="hero-title">${escapeHtml(item.title)}</h1>
+                <p class="hero-desc">${escapeHtml(isCourse ? `A top-rated lesson from ${item.album}. Category: ${item.category}` : (!isMusic ? (meta && meta.overview ? meta.overview : 'A classic sketch in the vault...') : `A track from "${item.album || 'Unknown'}" by ${item.artist}.`))}</p>
                 <div class="detail-meta">
-                    <span>${item.releaseYear || ''}</span>
+                    <span>${escapeHtml(item.releaseYear || '')}</span>
                     ${isMusic ? `<span class="acoustic-badge">${Math.round(item.tempo)} BPM</span>` : ''}
-                    ${isCourse ? `<span class="academic-badge">${item.category}</span> <span class="rating">⭐ ${item.rating}</span>` : ''}
+                    ${isCourse ? `<span class="academic-badge">${escapeHtml(item.category)}</span> <span class="rating">⭐ ${escapeHtml(item.rating)}</span>` : ''}
                 </div>
             </div>
         </div>
     `;
 }
 
-function renderItems(items, append = false) {
-    if (!grid) return;
-    console.log("🎨 hub: Rendering", items.length, "items into grid. Append:", append);
-    if (!append) grid.innerHTML = '';
-    if (featuredItems.size > 200) featuredItems.clear();
+function renderItems(items, append = false, target = grid) {
+    if (!target) return;
+    if (!append) target.innerHTML = '';
+    if (featuredItems.size > 300) featuredItems.clear();
 
+    const fragment = document.createDocumentFragment();
     items.forEach((item, i) => {
         const isMusic = item.tmdbId === -1;
         const isCourse = item.tmdbId === -2;
@@ -345,10 +394,10 @@ function renderItems(items, append = false) {
 
         const card = document.createElement('div');
         card.className = `card ${isCourse ? 'course-item' : ''}`;
-        card.dataset.tmdbId = item.tmdbId || '';
+        card.dataset.tmdbId = item.tmdbId > 0 ? item.tmdbId : '';
         const rot = (Math.random() * 4 - 2).toFixed(1);
         card.style.setProperty('--rand-rot', `${rot}deg`);
-        card.style.animationDelay = `${i * 0.05}s`;
+        card.style.animationDelay = `${Math.min(i, 12) * 0.05}s`;
         card.onclick = () => selectItemById(itemId);
 
         const meta = !isMusic && !isCourse && cache[item.tmdbId];
@@ -356,20 +405,25 @@ function renderItems(items, append = false) {
         let imageHtml = isCourse ? generateCoursePoster(item) :
             (isMusic ? generateMusicArt(item) :
                 (meta && meta.poster_path ? `<img src="${TMDB_POSTER}${meta.poster_path}" class="loaded" loading="lazy" decoding="async">` :
-                    (item.tmdbId > 0 ? `<div id="img-${item.tmdbId}" class="skeleton-sketch">${generateMovieSketch(item)}</div>` : generateMovieSketch(item))));
+                    (item.tmdbId > 0 ? `<div class="skeleton-sketch">${generateMovieSketch(item)}</div>` : generateMovieSketch(item))));
 
+        const labelClass = String(isCourse ? (item.album || 'Course') : 'item').toLowerCase().replace(/[^a-z0-9]+/g, '-');
+        const score = item.similarity > 0 ? `<span class="match-score">${Math.round(item.similarity * 100)}% match</span>` : '';
+        const voteAvg = meta && meta.vote_average ? `<span class="rating">⭐ ${Number(meta.vote_average).toFixed(1)}</span>` : '';
         card.innerHTML = `
-            <div class="match-label label-${(item.album || 'Course').toLowerCase().replace(' ', '-')}">${isCourse ? (item.album || 'Course') : (isMusic ? 'Draft' : 'Picked')}</div>
+            <div class="match-label label-${labelClass}">${escapeHtml(isCourse ? (item.album || 'Course') : (isMusic ? 'Draft' : 'Picked'))}</div>
             <div class="card-img">${imageHtml}</div>
-            <div class="card-title">${item.title}</div>
+            <div class="card-title">${escapeHtml(item.title)}</div>
             <div class="card-meta-line">
-                <span>${isCourse ? item.artist : (isMusic ? item.artist : item.releaseYear)}</span>
-                ${item.rating ? `<span class="rating">⭐ ${item.rating}</span>` : (item.vote_average ? `<span class="rating">⭐ ${item.vote_average.toFixed(1)}</span>` : '')}
+                <span>${escapeHtml(isCourse || isMusic ? item.artist : (item.releaseYear || ''))}</span>
+                ${item.rating ? `<span class="rating">⭐ ${escapeHtml(item.rating)}</span>` : voteAvg}
+                ${score}
             </div>
         `;
-        if (append) card.style.animationDelay = `${(i + discoveryOffset) * 0.05}s`;
-        grid.appendChild(card);
+        if (append) card.style.animationDelay = `${Math.min(i, 12) * 0.05}s`;
+        fragment.appendChild(card);
     });
+    target.appendChild(fragment);
 }
 
 function selectItemById(id) {
@@ -391,28 +445,36 @@ async function selectItem(item) {
         imgContainer.innerHTML = generateMusicArt(item);
         document.getElementById('det-tagline').textContent = item.artist;
         document.getElementById('det-desc').textContent = `Featured in "${item.album || 'Single'}".`;
-        document.getElementById('det-meta').innerHTML = `<span>${item.releaseYear}</span> <span class="acoustic-badge">${Math.round(item.tempo)} BPM</span>`;
+        document.getElementById('det-meta').innerHTML = `<span>${escapeHtml(item.releaseYear || '')}</span> <span class="acoustic-badge">${Math.round(item.tempo)} BPM</span>`;
     } else if (isCourse) {
         imgContainer.innerHTML = generateCoursePoster(item);
         document.getElementById('det-tagline').textContent = `Instructor: ${item.artist}`;
         document.getElementById('det-desc').textContent = `A top-rated lesson from ${item.album}. Category: ${item.category}`;
-        document.getElementById('det-meta').innerHTML = `<span>Rating: ${item.rating} ★</span> <span class="acoustic-badge">${item.category}</span>`;
+        document.getElementById('det-meta').innerHTML = `<span>Rating: ${escapeHtml(item.rating)} ★</span> <span class="acoustic-badge">${escapeHtml(item.category)}</span>`;
     } else {
         let meta = cache[item.tmdbId];
         if (!meta && item.tmdbId > 0) {
             // Show placeholder while fetching
             imgContainer.classList.add('skeleton');
             document.getElementById('det-desc').textContent = "Inkpick is sketching the details...";
-            const res = await fetch(`/api/v1/tmdb/movie/${item.tmdbId}`);
-            meta = await res.json();
-            cache[item.tmdbId] = meta;
-            pruneCache();
+            try {
+                const res = await fetch(`/api/v1/tmdb/movie/${item.tmdbId}`);
+                if (res.ok) {
+                    meta = await res.json();
+                    cache[item.tmdbId] = meta;
+                    pruneCache();
+                }
+            } catch (err) {
+                console.error("Detail fetch error:", err);
+            }
+            imgContainer.classList.remove('skeleton');
         }
         meta = meta || {};
         imgContainer.innerHTML = meta.poster_path ? `<img src="${TMDB_POSTER + meta.poster_path}">` : generateMovieSketch(item);
         document.getElementById('det-tagline').textContent = meta.tagline || "";
         document.getElementById('det-desc').textContent = meta.overview || "";
-        document.getElementById('det-meta').innerHTML = `<span>${meta.release_date?.split('-')[0] || ''}</span> <span>${meta.runtime ? meta.runtime + 'm' : ''}</span>`;
+        const genres = (item.genres || []).slice(0, 3).map(g => `<span class="acoustic-badge">${escapeHtml(g)}</span>`).join(' ');
+        document.getElementById('det-meta').innerHTML = `<span>${escapeHtml(meta.release_date?.split('-')[0] || item.releaseYear || '')}</span> <span>${meta.runtime ? escapeHtml(meta.runtime) + 'm' : ''}</span> ${genres}`;
     }
 
     const playLink = document.getElementById('det-play-link');
@@ -437,6 +499,40 @@ async function selectItem(item) {
 
     if (typeof lucide !== 'undefined') lucide.createIcons();
     detailView.scrollIntoView({ behavior: 'smooth' });
+    loadSimilar(item);
+}
+
+// ✨ "More like this": fetch recommendations for the selected item
+async function loadSimilar(item) {
+    const wrap = document.getElementById('similar-wrap');
+    const target = document.getElementById('similar-results');
+    if (!wrap || !target) return;
+    const seq = ++similarSeq;
+    const tab = currentTab;
+    const itemId = item.movieId || item.spotifyId;
+    wrap.style.display = 'block';
+    target.innerHTML = '<p class="similar-empty">Sketching similar picks... ✏️</p>';
+
+    try {
+        const res = await fetch(`/api/v1/recommend/${tab}/${encodeURIComponent(itemId)}?limit=8`);
+        if (seq !== similarSeq) return;
+        if (!res.ok) {
+            target.innerHTML = '<p class="similar-empty">No similar sketches yet for this one.</p>';
+            return;
+        }
+        const data = await res.json();
+        if (seq !== similarSeq) return;
+        const recs = data.recommendations || [];
+        recs.forEach(r => { if (r.cached && r.tmdbId > 0) cache[r.tmdbId] = r.cached; });
+        renderItems(recs, false, target);
+        if (tab === 'movies') {
+            const uncached = recs.filter(r => r.tmdbId > 0 && !cache[r.tmdbId]).map(r => r.tmdbId);
+            if (uncached.length) batchFetchMeta(uncached);
+        }
+    } catch (err) {
+        console.error("Similar error:", err);
+        if (seq === similarSeq) target.innerHTML = '<p class="similar-empty">Couldn\'t load similar picks right now.</p>';
+    }
 }
 
 async function batchFetchMeta(tmdbIds) {
@@ -450,15 +546,15 @@ async function batchFetchMeta(tmdbIds) {
         const results = data.results || {};
         for (const [tid, meta] of Object.entries(results)) {
             cache[parseInt(tid)] = meta;
-            const card = document.querySelector(`.card[data-tmdb-id="${tid}"]`);
-            if (card) updateCard(parseInt(tid), card, meta);
+            document.querySelectorAll(`.card[data-tmdb-id="${tid}"]`)
+                .forEach(card => updateCard(parseInt(tid), card, meta));
         }
         pruneCache();
     } catch (err) { }
 }
 
 function updateCard(tid, cardEl, data) {
-    const container = cardEl.querySelector(`#img-${tid}`);
+    const container = cardEl.querySelector('.skeleton-sketch');
     if (container && data.poster_path) {
         container.innerHTML = `<img src="${TMDB_POSTER}${data.poster_path}" class="loaded" loading="lazy">`;
         container.classList.remove('skeleton-sketch');
@@ -484,7 +580,7 @@ function generateMasterpieceSketch(item, mode = 'music') {
     const paperType = rng() > 0.5 ? 'dot-paper' : 'graph-paper';
     const paths = [generateScribblePath(rng, 300, 450), generateScribblePath(rng, 300, 450)];
     const subText = mode === 'music' ? (item.artist || '') : (item.releaseYear || 'Cinema');
-    return `<div class="sketch-canvas ${paperType}"><svg class="sketch-svg" viewBox="0 0 300 450"><path d="${paths[0]}" stroke-width="1.5" opacity="0.1" /><path d="${paths[1]}" stroke-width="1" opacity="0.05" /></svg><div class="sketch-hero-text">${item.title}</div><div class="sketch-sub-text">${subText}</div></div>`;
+    return `<div class="sketch-canvas ${paperType}"><svg class="sketch-svg" viewBox="0 0 300 450"><path d="${paths[0]}" stroke-width="1.5" opacity="0.1" /><path d="${paths[1]}" stroke-width="1" opacity="0.05" /></svg><div class="sketch-hero-text">${escapeHtml(item.title)}</div><div class="sketch-sub-text">${escapeHtml(subText)}</div></div>`;
 }
 
 function generateMusicArt(item) { return generateMasterpieceSketch(item, 'music'); }
@@ -495,22 +591,15 @@ function generateCoursePoster(item) {
     const cat = (item.category || 'default').toLowerCase();
     const fallback = COURSE_FALLBACKS[cat] || COURSE_FALLBACKS['default'];
 
-    // 1. YouTube High-Res Thumbnail
-    let videoId = '';
-    if (item.url) {
-        if (item.url.includes('youtube.com/watch?v=')) videoId = item.url.split('v=')[1].split('&')[0];
-        else if (item.url.includes('youtu.be/')) videoId = item.url.split('/').pop();
-    }
+    // 1. YouTube High-Res Thumbnail (IDs are validated to [A-Za-z0-9_-])
+    const ytMatch = String(item.url || '').match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([A-Za-z0-9_-]{6,})/);
+    const videoId = ytMatch ? ytMatch[1] : '';
     if (videoId) {
         return `<img src="https://img.youtube.com/vi/${videoId}/maxresdefault.jpg" class="loaded course-poster" alt="YouTube" style="width:100%;height:100%;object-fit:cover;" onerror="this.src='https://img.youtube.com/vi/${videoId}/hqdefault.jpg'">`;
     }
 
-    // 2. Predictive Udemy CDN Pattern (Limited but real where it works)
-    const udemyImg = `https://img-c.udemycdn.com/course/480x270/${item.movieId}.jpg`;
-    
-    // 3. Smart Fallback: Use title-based keyword if specific category is too broad
-    const keywords = (item.title.split(' ').slice(0, 3).join(',') + ',' + cat).toLowerCase();
-    const smartFallback = `https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=512&q=80&q=${encodeURIComponent(keywords)}`;
+    // 2. Predictive Udemy CDN pattern, falling back to a category image
+    const udemyImg = `https://img-c.udemycdn.com/course/480x270/${encodeURIComponent(item.movieId)}.jpg`;
 
     return `<img src="${udemyImg}" class="loaded course-poster" loading="lazy" alt="Course" style="width:100%;height:100%;object-fit:cover;" onerror="this.src='${fallback}'">`;
 }
