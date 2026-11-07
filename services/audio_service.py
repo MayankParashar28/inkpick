@@ -1,5 +1,6 @@
 from modules.music_recommender import MusicEngine
 
+
 class AudioService:
     """
     Audio Domain Service
@@ -11,14 +12,18 @@ class AudioService:
         self.engine = MusicEngine(data_path=data_path, model_path=model_path)
         print("  📻 Audio Service initialized")
 
+    @staticmethod
+    def parse_id(item_id):
+        return str(item_id)
+
     def search(self, query: str, limit: int = 12):
-        """Perform search across the audio catalog."""
         return self.engine.search(query, limit=limit)
 
-    def recommend(self, item_id: str, top_n: int = 12, genre: str = None):
-        """Generate audio recommendations."""
+    def recommend(self, item_id: str, top_n: int = 12, genre: str = None, **_):
         return self.engine.recommend(item_id, top_n=top_n)
 
     def discover(self, limit: int = 24, offset: int = 0):
-        """Get discovery content for the audio domain."""
         return self.engine.discover(limit=limit, offset=offset)
+
+    def random_pick(self):
+        return self.engine.random_pick()

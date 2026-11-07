@@ -2,7 +2,7 @@
 Hybrid Recommendation Engine
 =============================
 Blends content-based and collaborative results.
-Falls back to content-only when collaborative is unavailable.
+Falls back to content-only when the collaborative model is not trained.
 """
 
 
@@ -14,57 +14,21 @@ class HybridEngine:
         self.collab = collab_engine
         print("  🔀 Hybrid Engine ready")
 
-    def recommend(self, movie_id: int, top_n: int = 12, genre: str = None) -> list[dict]:
-        """
-        Generate hybrid recommendations.
-        Falls back to content-only when collaborative returns nothing.
-        Optionally filters by genre.
-        """
-        # Get content-based results
-        content_recs = self.content.recommend(movie_id, top_n=top_n * 2)
+    def recommend(self, movie_id: int, top_n: int = 12, genre: str | None = None) -> list[dict]:
+        content_recs = self.content.recommend(movie_id, top_n=top_n, genre=genre)
 
-        # Get collaborative results
-        collab_recs = self.collab.recommend(movie_id, top_n=top_n * 2)
-
-        if collab_recs:
-            # Blend: interleave collab and content, deduplicating by movieId
-            seen = set()
-            blended = []
-            # Alternate: collab, content, collab, content...
-            max_len = max(len(collab_recs), len(content_recs))
-            for i in range(max_len):
-                if i < len(collab_recs):
-                    mid = collab_recs[i]["movieId"]
-                    if mid not in seen:
-                        seen.add(mid)
-                        blended.append(collab_recs[i])
-                if i < len(content_recs):
-                    mid = content_recs[i]["movieId"]
-                    if mid not in seen:
-                        seen.add(mid)
-                        blended.append(content_recs[i])
-        else:
-            # Fallback: content-only
+        # The popularity fallback is not personalised — only blend a real model
+        if not self.collab.ready:
             blended = content_recs
+        else:
+            collab_recs = self.collab.recommend(movie_id, top_n=top_n, genre=genre)
+            seen, blended = set(), []
+            for i in range(max(len(content_recs), len(collab_recs))):
+                for source in (content_recs, collab_recs):
+                    if i < len(source) and source[i]["movieId"] not in seen:
+                        seen.add(source[i]["movieId"])
+                        blended.append(source[i])
 
-        # Genre filter (if requested)
-        if genre:
-            genre_lower = genre.lower()
-            blended = [
-                r for r in blended
-                if any(g.lower() == genre_lower for g in r.get("genres", []))
-            ]
-
-        # Tag each result with hybrid mode
         for r in blended:
             r["mode"] = "hybrid"
-
         return blended[:top_n]
-
-    def search(self, query: str, limit: int = 10) -> list[dict]:
-        """Delegate search to content engine."""
-        return self.content.search(query, limit)
-
-    def discover(self, limit: int = 24, offset: int = 0) -> list[dict]:
-        """Delegate discovery to content engine with pagination."""
-        return self.content.discover(limit, offset)

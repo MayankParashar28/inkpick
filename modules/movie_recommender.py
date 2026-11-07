@@ -2,176 +2,143 @@
 Content-Based Movie Recommendation Engine (Zero-Scipy Edition)
 ============================================================
 Loads pre-trained TF-IDF assets and serves recommendations via
-a manual sparse dot-product implementation in Pure Numpy.
-
-Optimization: 
-  - Removes 'scipy' dependency (~150MB).
-  - Uses native 'numpy' with manual CSR matrix math.
+a vectorized sparse dot-product implemented in pure NumPy.
 """
 
 import os
-import csv
-import pickle
+import random
 import re
+
 import numpy as np
-from sys import intern
-from modules.utils import parse_list_field, format_movie_response
+import pandas as pd
+
+from modules.utils import (
+    build_row_map,
+    format_movie_response,
+    get_fuzzy_suggestion,
+    parse_list_field,
+    sparse_row_scores,
+    top_n_indices,
+)
 
 
 class MovieEngine:
     """Content-based recommendation engine (Zero-Scipy)."""
 
     def __init__(self, data_path: str = "processed/", model_path: str = "models/", mapping_service=None):
-        print("  📦 Loading Content-Based Engine (Pandas Optimization)...")
+        print("  📦 Loading Content-Based Engine...")
         self.mapping_service = mapping_service
 
-        # ── 1. Load movie metadata via Pandas ───────────────────────
-        import pandas as pd
-        movies_file = os.path.join(data_path, "movies_processed.csv")
-        self.df = pd.read_csv(movies_file)
+        # ── 1. Movie metadata ───────────────────────────────────────
+        self.df = pd.read_csv(os.path.join(data_path, "movies_processed.csv"))
         self.df["title_norm"] = self.df["title"].str.lower().str.strip()
-        self.df["_idx"] = np.arange(len(self.df))
-        
-        # ID lookup map for O(1) performance
-        self.id_to_idx = dict(zip(self.df["movieId"], self.df["_idx"]))
+        self.df["genres_list"] = self.df["genres"].apply(parse_list_field)
+        self.df["genres_norm"] = self.df["genres_list"].apply(lambda gs: {g.lower() for g in gs})
 
-        # Pre-calculate discovery pool (movies with valid posters/IDs)
+        # Resolve external IDs once (instead of per-response lookups)
         if self.mapping_service:
-            v_tmdb = pd.to_numeric(self.df["movieId"].apply(self.mapping_service.get_tmdb_id), errors='coerce').fillna(-1)
-            self.discover_pool = self.df[v_tmdb > 0].index.tolist()
+            self.df["tmdbId"] = self.df["movieId"].map(self.mapping_service.get_tmdb_id).fillna(-1).astype(int)
+            self.df["imdbId"] = self.df["movieId"].map(self.mapping_service.get_imdb_id).fillna(-1).astype(int)
         else:
-            self.discover_pool = self.df[self.df["tmdbId"] > 0].index.tolist() if "tmdbId" in self.df.columns else self.df.index.tolist()
+            for col in ("tmdbId", "imdbId"):
+                if col not in self.df.columns:
+                    self.df[col] = -1
 
+        self.all_genres = set().union(*self.df["genres_norm"])
+        self.id_to_idx = {int(m): i for i, m in enumerate(self.df["movieId"])}
 
-        # ── 2. Load Numpy-only CSR Components ───────────────────────
+        # Discovery pool: movies with valid TMDB IDs (posters)
+        self.discover_pool = np.flatnonzero(self.df["tmdbId"].to_numpy() > 0).tolist()
+
+        # ── 2. Numpy-only CSR components ────────────────────────────
         self.data = np.load(os.path.join(model_path, "tfidf_data.npy"))
         self.indices = np.load(os.path.join(model_path, "tfidf_indices.npy"))
         self.indptr = np.load(os.path.join(model_path, "tfidf_indptr.npy"))
-
         with open(os.path.join(model_path, "tfidf_shape.txt"), "r") as f:
-            shape = f.read().split(",")
-            self.num_rows = int(shape[0])
-            self.num_cols = int(shape[1])
+            rows, cols = f.read().strip().split(",")
+            self.num_rows, self.num_cols = int(rows), int(cols)
 
-        # Sanity check
-        assert self.num_rows == len(self.df), (
-            f"Numpy matrix rows ({self.num_rows}) != "
-            f"movies count ({len(self.df)})"
-        )
+        if self.num_rows != len(self.df):
+            raise ValueError(f"TF-IDF rows ({self.num_rows}) != movies count ({len(self.df)})")
 
-        # ── 3. Pre-build row_map for vectorized dot products ────────
-        # Maps each non-zero element index -> its row number
-        # Enables O(nnz) sparse dot products via np.bincount
-        self.row_map = np.zeros(len(self.indices), dtype=np.int32)
-        for r in range(self.num_rows):
-            s, e = self.indptr[r], self.indptr[r+1]
-            self.row_map[s:e] = r
+        # ── 3. Row map for vectorized dot products (no Python loop) ──
+        self.row_map = build_row_map(self.indptr, self.num_rows)
 
-        print(f"  ✅ Content Engine ready — {len(self.df):,} movies (Pandas Vectorized).")
-
-        # ── 4. Pre-calculate Fuzzy search pool (O4) ────────────────
-        # Clean titles (remove year) for the fuzzy matching keys, 
-        # but map them back to original titles for the suggestion.
+        # ── 4. Fuzzy search pool (titles without year) ──────────────
         self._fuzzy_map = {
-            re.sub(r"\s+\(\d{4}\)$", "", str(title)): title 
-            for title in self.df["title"].iloc[:40000] # Top 40k for performance vs accuracy
+            re.sub(r"\s+\(\d{4}\)$", "", str(title)): title
+            for title in self.df["title"].iloc[:40000]
         }
         self._fuzzy_choices = list(self._fuzzy_map.keys())
+
+        print(f"  ✅ Content Engine ready — {len(self.df):,} movies.")
 
     # ── Public API ──────────────────────────────────────────────────
 
     def search(self, query: str, limit: int = 15) -> tuple[list[dict], str | None]:
-        """Vectorized search movies by title with fuzzy fallback."""
-        from modules.utils import get_fuzzy_suggestion
+        """Search movies by title (or exact genre) with fuzzy fallback."""
         q = query.lower().strip()
-        mask = self.df["title_norm"].str.contains(q, na=False, regex=False)
-        hits = self.df[mask].head(limit)
-        results = [self._format_with_ids(row.to_dict()) for _, row in hits.iterrows()]
-        
+        if q in self.all_genres:
+            # Genre pills (e.g. "Comedy", "Sci-Fi") search by genre, not title
+            genre_mask = self.df["genres_norm"].apply(lambda gs: q in gs)
+            hits = self.df[genre_mask & self.df["tmdbId"].gt(0)]
+        else:
+            hits = self.df[self.df["title_norm"].str.contains(q, na=False, regex=False)]
+        results = [self._format(row) for row in hits.head(limit).to_dict("records")]
+
         suggestion = None
         if not results:
-            # Only try fuzzy matching if direct search yields nothing
             match = get_fuzzy_suggestion(query, self._fuzzy_choices, threshold=0.5)
             if match:
                 suggestion = self._fuzzy_map.get(match)
-            
         return results, suggestion
 
-    def recommend(self, movie_id: int, top_n: int = 12) -> list[dict]:
-        """
-        Vectorized content-based recommendations via row_map + bincount.
-        O(nnz) sparse dot product — ~50ms for 87K movies.
-        """
+    def recommend(self, movie_id: int, top_n: int = 12, genre: str | None = None) -> list[dict]:
+        """Vectorized content-based recommendations (O(nnz))."""
         idx = self.id_to_idx.get(movie_id)
-        if idx is None: return []
-
-        # 1. Get non-zeros of the query row
-        start, end = self.indptr[idx], self.indptr[idx+1]
-        if start == end: return []
-        row_indices = self.indices[start:end]
-        row_data = self.data[start:end]
-
-        # 2. Build query lookup
-        query_map = dict(zip(row_indices.tolist(), row_data.tolist()))
-
-        # 3. Vectorized Sparse Dot Product via row_map + bincount
-        # Find all matrix entries sharing columns with query row
-        mask = np.isin(self.indices, row_indices)
-        if not np.any(mask): return []
-
-        matching_vals = self.data[mask]
-        matching_rows = self.row_map[mask]
-        matching_cols = self.indices[mask]
-
-        # Weight each match by the query vector's value for that column
-        weights = np.array([query_map[c] for c in matching_cols.tolist()])
-        contributions = matching_vals * weights
-
-        # Sum contributions per row
-        scores = np.bincount(matching_rows, weights=contributions, minlength=self.num_rows)
-
-        # 4. Fast top-N via argpartition
-        n_candidates = min(top_n + 1, len(scores))
-        top_indices_unsorted = np.argpartition(scores, -n_candidates)[-n_candidates:]
-        top_indices = top_indices_unsorted[np.argsort(scores[top_indices_unsorted])[::-1]]
-        top_indices = top_indices[top_indices != idx][:top_n]
-
-        results = []
-        for i in top_indices:
-            row = self.df.iloc[i].to_dict()
-            results.append(
-                self._format_with_ids(
-                    row, 
-                    score=self._normalize_score(float(scores[i])), 
-                    mode="content"
-                )
-            )
-        return results
-
-    def _format_with_ids(self, movie, score=None, mode="content"):
-        movieId = movie["movieId"]
-        if self.mapping_service:
-             tmdbId = self.mapping_service.get_tmdb_id(movieId)
-             imdbId = self.mapping_service.get_imdb_id(movieId)
-        else:
-             tmdbId = int(movie.get("tmdbId", -1))
-             imdbId = int(movie.get("imdbId", -1))
-        return format_movie_response(
-             {**movie, "tmdbId": tmdbId, "imdbId": imdbId},
-             score=score,
-             mode=mode
+        if idx is None:
+            return []
+        scores = sparse_row_scores(
+            self.data, self.indices, self.row_map, self.indptr, idx, self.num_rows, self.num_cols
         )
+        if scores is None:
+            return []
+
+        if genre:
+            g = genre.lower()
+            allowed = self.df["genres_norm"].apply(lambda gs: g in gs).to_numpy()
+            scores = np.where(allowed, scores, 0.0)
+
+        top = top_n_indices(scores, top_n, exclude_idx=idx)
+        rows = self.df.iloc[top].to_dict("records")
+        return [
+            self._format(row, score=self._normalize_score(float(scores[i])), mode="content")
+            for row, i in zip(rows, top)
+        ]
 
     def discover(self, limit: int = 24, offset: int = 0) -> list[dict]:
-        """Return a deterministic selection of movies for pagination support."""
-        start = offset
-        end = offset + limit
-        # Slice from the discover pool (already sorted by popularity)
-        sample_indices = self.discover_pool[start:end]
-        rows = self.df.iloc[sample_indices]
-        return [self._format_with_ids(row.to_dict()) for _, row in rows.iterrows()]
+        """Return a deterministic page of movies from the discovery pool."""
+        sample = self.discover_pool[offset: offset + limit]
+        return [self._format(row) for row in self.df.iloc[sample].to_dict("records")]
 
-    def _normalize_score(self, score: float) -> float:
-        if score <= 0: return 0.0
-        normalized = 0.65 + (score * 0.7) 
-        return round(min(0.98, normalized), 4)
+    def random_pick(self) -> dict | None:
+        """Return a random movie with a valid poster (Surprise Me)."""
+        if not self.discover_pool:
+            return None
+        return self._format(self.df.iloc[random.choice(self.discover_pool)].to_dict())
+
+    def get_by_ids(self, movie_ids) -> list[dict]:
+        """Look up movies by movieId, preserving order and skipping unknowns."""
+        idxs = [self.id_to_idx[m] for m in movie_ids if m in self.id_to_idx]
+        return [self._format(row) for row in self.df.iloc[idxs].to_dict("records")]
+
+    # ── Helpers ─────────────────────────────────────────────────────
+
+    def _format(self, movie: dict, score=None, mode="content") -> dict:
+        return format_movie_response(movie, score=score, mode=mode)
+
+    @staticmethod
+    def _normalize_score(score: float) -> float:
+        if score <= 0:
+            return 0.0
+        return round(min(0.98, 0.5 + score * 0.5), 4)

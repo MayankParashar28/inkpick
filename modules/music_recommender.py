@@ -1,119 +1,100 @@
 """
 Music Discovery Engine (Zero-Scipy / Vercel Optimized)
 =====================================================
-Serves 100,000 song "sketches" via high-performance Numpy sparse math.
+Serves ~90,000 song "sketches" via vectorized NumPy sparse math.
 """
 
 import os
-import csv
+import random
+
 import numpy as np
-from sys import intern
-from modules.utils import format_movie_response # We'll rename some fields for music
+import pandas as pd
+
+from modules.utils import (
+    build_row_map,
+    get_fuzzy_suggestion,
+    safe_float,
+    safe_str,
+    sparse_row_scores,
+    top_n_indices,
+)
+
 
 class MusicEngine:
     """The 'Playlist Scribbles' discovery engine."""
 
     def __init__(self, data_path: str = "processed/", model_path: str = "models/", mapping_service=None):
-        print("  🎸 Loading Playlist Scribbles (Pandas Optimization)...")
+        print("  🎸 Loading Playlist Scribbles...")
         self.mapping_service = mapping_service
 
-        # 1. Load song metadata via Pandas
-        import pandas as pd
-        songs_file = os.path.join(data_path, "songs_processed.csv")
-        self.df = pd.read_csv(songs_file)
-        self.df["_idx"] = np.arange(len(self.df))
+        self.df = pd.read_csv(os.path.join(data_path, "songs_processed.csv"))
+        for col in ("name", "artists_clean", "album"):
+            self.df[col] = self.df[col].fillna("Unknown")
         self.df["name_norm"] = self.df["name"].str.lower()
         self.df["artist_norm"] = self.df["artists_clean"].str.lower()
-        
-        # O(1) ID lookup map
-        self.id_to_idx = dict(zip(self.df["id"], self.df["_idx"]))
+        self.id_to_idx = {sid: i for i, sid in enumerate(self.df["id"])}
 
-        # 2. Load Numpy-only CSR Components
         self.data = np.load(os.path.join(model_path, "songs_tfidf_data.npy"))
         self.indices = np.load(os.path.join(model_path, "songs_tfidf_indices.npy"))
         self.indptr = np.load(os.path.join(model_path, "songs_tfidf_indptr.npy"))
-
         with open(os.path.join(model_path, "songs_tfidf_shape.txt"), "r") as f:
-            shape = f.read().split(",")
-            self.num_rows = int(shape[0])
+            rows, cols = f.read().strip().split(",")
+            self.num_rows, self.num_cols = int(rows), int(cols)
 
-        # 3. Create a Row Map for vectorized dot products
-        self.row_map = np.zeros(len(self.indices), dtype=np.int32)
-        for r in range(self.num_rows):
-            start, end = self.indptr[r], self.indptr[r+1]
-            self.row_map[start:end] = r
+        self.row_map = build_row_map(self.indptr, self.num_rows)
 
-        print(f"  ✅ Music Engine ready — {len(self.df):,} tracks.")
-        
-        # O4: Pre-compute fuzzy search pool
         self._fuzzy_choices = (
-            self.df["name"].iloc[:40000].tolist() + 
-            self.df["artists_clean"].iloc[:5000].unique().tolist()
+            self.df["name"].iloc[:40000].tolist()
+            + self.df["artists_clean"].iloc[:5000].unique().tolist()
         )
+        print(f"  ✅ Music Engine ready — {len(self.df):,} tracks.")
 
     def search(self, query: str, limit: int = 15) -> tuple[list[dict], str | None]:
-        """Vectorized search songs by name or artist with fuzzy fallback."""
-        from modules.utils import get_fuzzy_suggestion
+        """Search songs by name or artist with fuzzy fallback."""
         q = query.lower().strip()
-        mask = self.df["name_norm"].str.contains(q, na=False, regex=False) | self.df["artist_norm"].str.contains(q, na=False, regex=False)
-        hits = self.df[mask].head(limit)
-        results = [self._format_response(row.to_dict()) for _, row in hits.iterrows()]
-        
-        suggestion = None
-        if not results:
-            suggestion = get_fuzzy_suggestion(query, self._fuzzy_choices)
-            
+        mask = (self.df["name_norm"].str.contains(q, na=False, regex=False)
+                | self.df["artist_norm"].str.contains(q, na=False, regex=False))
+        results = [self._format(row) for row in self.df[mask].head(limit).to_dict("records")]
+        suggestion = None if results else get_fuzzy_suggestion(query, self._fuzzy_choices)
         return results, suggestion
 
-    def recommend(self, song_id: str, top_n: int = 12, genre: str = None) -> list[dict]:
-        """Generate acoustically similar track 'sketches' via O(1) lookup."""
+    def recommend(self, song_id: str, top_n: int = 12, genre: str | None = None) -> list[dict]:
+        """Acoustically/textually similar tracks via sparse cosine scores."""
         idx = self.id_to_idx.get(song_id)
-        if idx is None: return []
-
-        # Vectorized Sparse Dot Product
-        start, end = self.indptr[idx], self.indptr[idx+1]
-        if start >= end: return []
-        row_indices = self.indices[start:end]
-        row_data = self.data[start:end]
-        query_map = dict(zip(row_indices, row_data))
-        
-        mask = np.isin(self.indices, row_indices)
-        if not np.any(mask): return []
-
-        matching_vals = self.data[mask]
-        matching_rows = self.row_map[mask]
-        matching_cols = self.indices[mask]
-        
-        weights = np.array([query_map[c] for c in matching_cols])
-        contributions = matching_vals * weights
-        scores = np.bincount(matching_rows, weights=contributions, minlength=self.num_rows)
-
-        # Top-N partition
-        top_indices = np.argpartition(scores, -top_n-1)[-top_n-1:]
-        top_indices = top_indices[np.argsort(scores[top_indices])[::-1]]
-        top_indices = [i for i in top_indices if i != idx][:top_n]
-
-        return [self._format_response(self.df.iloc[i].to_dict(), scores[i]) for i in top_indices]
+        if idx is None or idx >= self.num_rows:
+            return []
+        scores = sparse_row_scores(
+            self.data, self.indices, self.row_map, self.indptr, idx, self.num_rows, self.num_cols
+        )
+        if scores is None:
+            return []
+        top = top_n_indices(scores, top_n, exclude_idx=idx)
+        rows = self.df.iloc[top].to_dict("records")
+        return [self._format(row, scores[i]) for row, i in zip(rows, top)]
 
     def discover(self, limit: int = 24, offset: int = 0) -> list[dict]:
-        """Return a selection of songs with pagination support."""
-        start = offset
-        end = offset + limit
-        rows = self.df.iloc[start:end]
-        return [self._format_response(row.to_dict()) for _, row in rows.iterrows()]
+        return [self._format(row) for row in self.df.iloc[offset: offset + limit].to_dict("records")]
 
-    def _format_response(self, song, score=0.0):
-        """Maps Spotify metadata to our hand-drawn card format."""
+    def random_pick(self) -> dict | None:
+        if self.df.empty:
+            return None
+        return self._format(self.df.iloc[random.randrange(len(self.df))].to_dict())
+
+    @staticmethod
+    def _format(song: dict, score=0.0) -> dict:
+        """Maps Spotify metadata to the hand-drawn card format."""
+        score = safe_float(score)
+        year = safe_float(song.get("year"), default=None)
         return {
             "movieId": song["id"],
-            "title": song["name"],
-            "artist": song["artists_clean"],
-            "album": song.get("album", "Unknown"),
-            "releaseYear": song["year"],
+            "title": safe_str(song.get("name"), "Unknown"),
+            "artist": safe_str(song.get("artists_clean"), "Unknown").replace(";", ", "),
+            "album": safe_str(song.get("album"), "Unknown"),
+            "releaseYear": int(year) if year else None,
             "tmdbId": -1,
             "spotifyId": song["id"],
-            "similarity": round(float(score), 4) if score > 0 else 0,
-            "tempo": round(float(song.get("tempo", 0)), 1),
-            "energy": round(float(song.get("energy", 0)), 2),
-            "danceability": round(float(song.get("danceability", 0)), 2)
+            "similarity": round(score, 4) if score > 0 else 0,
+            "tempo": safe_float(song.get("tempo"), ndigits=1),
+            "energy": safe_float(song.get("energy"), ndigits=2),
+            "danceability": safe_float(song.get("danceability"), ndigits=2),
         }
