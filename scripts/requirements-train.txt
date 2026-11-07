@@ -1,0 +1,5 @@
+# Offline training only (not needed to run the app)
+scipy>=1.11
+scikit-learn>=1.4
+pandas>=2.2.0
+numpy>=2.0

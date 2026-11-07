@@ -1,70 +1,80 @@
-import pandas as pd
-import numpy as np
-import time
-import pickle
+"""
+Train Inkpick's collaborative-filtering model.
+
+Usage (from the repo root):
+    pip install -r scripts/requirements-train.txt
+    # any MovieLens ratings.csv works: ml-latest-small (100k), ml-32m (32M) ...
+    python scripts/train_collab.py --ratings path/to/ratings.csv
+
+Writes:
+    models/collab_factors.npy    float32 [n_movies, k]  (L2-normalised)
+    models/collab_movie_ids.npy  int32   [n_movies]
+
+Method: user-mean-centred rating matrix -> truncated SVD -> item factors.
+Cosine similarity between item factors = "people who liked X also liked Y".
+"""
+import argparse
 import os
-from scipy.sparse import csr_matrix
-from sklearn.decomposition import TruncatedSVD
+import time
 
-# Configuration
-DATA_DIR = "processed"
-MODEL_DIR = "models"
-os.makedirs(MODEL_DIR, exist_ok=True)
+import numpy as np
+import pandas as pd
 
-def train_collaborative_engine():
-    print("⏳ Loading 32M ratings (Efficient Load)...")
-    t_start = time.time()
-    
-    # Load only necessary columns with optimized dtypes
-    ratings = pd.read_csv(
-        f"{DATA_DIR}/ratings_filtered.csv", 
-        usecols=["userId", "movieId", "rating"],
-        dtype={"userId": "int32", "movieId": "int32", "rating": "float32"}
-    )
-    
-    print(f"🏗️ Mapping sparse indices...")
-    
-    # Create categorical mappings for sparse matrix indices
-    user_c = pd.Categorical(ratings["userId"])
-    movie_c = pd.Categorical(ratings["movieId"])
-    
-    # Build the CSR Matrix (Users x Movies)
-    row_codes = user_c.codes
-    col_codes = movie_c.codes
-    
+
+def build_matrix(ratings: pd.DataFrame):
+    from scipy.sparse import csr_matrix
+
+    users = pd.Categorical(ratings["userId"])
+    movies = pd.Categorical(ratings["movieId"])
+    # Centre each user's ratings so "liked" vs "disliked" is relative to their own scale
+    centred = ratings["rating"] - ratings.groupby("userId")["rating"].transform("mean")
     X = csr_matrix(
-        (ratings["rating"], (row_codes, col_codes)), 
-        shape=(user_c.categories.size, movie_c.categories.size)
+        (centred.astype(np.float32).to_numpy(), (movies.codes, users.codes)),
+        shape=(movies.categories.size, users.categories.size),
     )
-    
-    movie_id_mapping = dict(enumerate(movie_c.categories))
-    movie_to_code = {v: k for k, v in movie_id_mapping.items()}
-    
-    # Clean up memory immediately
-    del ratings, user_c, movie_c
-    
-    print("⚡ Training Matrix Factorization (Latent Space = 100)...")
-    # Training on the Transpose (Movies x Users) to get Movie Factors
-    svd = TruncatedSVD(n_components=100, algorithm="randomized", random_state=42)
-    movie_factors = svd.fit_transform(X.T)
-    
-    # Standardize factors (Pre-normalization for Cosine Similarity)
-    norms = np.linalg.norm(movie_factors, axis=1, keepdims=True)
-    movie_factors = np.divide(movie_factors, norms, out=np.zeros_like(movie_factors), where=norms!=0)
-    
-    # Save Assets
-    print(f"💾 Saving pre-normalized assets to ./{MODEL_DIR}/...")
-    np.save(f"{MODEL_DIR}/collab_factors.npy", movie_factors)
-    
-    with open(f"{MODEL_DIR}/movie_id_map.pkl", "wb") as f:
-        pickle.dump(movie_id_mapping, f)
-        
-    with open(f"{MODEL_DIR}/movie_to_code.pkl", "wb") as f:
-        pickle.dump(movie_to_code, f)
-        
-    print(f"✅ Collaborative Filtering Engine trained in {time.time() - t_start:.2f}s")
-    print(f"   Matrix Shape: {X.shape}")
-    print(f"   Factors Shape: {movie_factors.shape}")
+    return X, np.asarray(movies.categories, dtype=np.int32)
+
+
+def train(ratings_path: str, out_dir: str, k: int, min_ratings: int, catalog_path: str | None):
+    t0 = time.time()
+    print(f"⏳ Loading ratings from {ratings_path} ...")
+    ratings = pd.read_csv(
+        ratings_path, usecols=["userId", "movieId", "rating"],
+        dtype={"userId": "int32", "movieId": "int32", "rating": "float32"},
+    )
+
+    if catalog_path and os.path.exists(catalog_path):
+        known = set(pd.read_csv(catalog_path, usecols=["movieId"])["movieId"])
+        ratings = ratings[ratings["movieId"].isin(known)]
+
+    counts = ratings["movieId"].value_counts()
+    ratings = ratings[ratings["movieId"].isin(counts[counts >= min_ratings].index)]
+    print(f"   {len(ratings):,} ratings · {ratings['userId'].nunique():,} users · "
+          f"{ratings['movieId'].nunique():,} movies (≥{min_ratings} ratings each)")
+
+    X, movie_ids = build_matrix(ratings)
+    k = max(2, min(k, min(X.shape) - 1))
+    print(f"⚡ Truncated SVD (k={k}) on {X.shape[0]:,} × {X.shape[1]:,} ...")
+    from sklearn.decomposition import TruncatedSVD
+    factors = TruncatedSVD(n_components=k, algorithm="randomized", random_state=42).fit_transform(X)
+
+    norms = np.linalg.norm(factors, axis=1, keepdims=True)
+    factors = np.divide(factors, norms, out=np.zeros_like(factors), where=norms > 0).astype(np.float32)
+
+    os.makedirs(out_dir, exist_ok=True)
+    np.save(os.path.join(out_dir, "collab_factors.npy"), factors)
+    np.save(os.path.join(out_dir, "collab_movie_ids.npy"), movie_ids)
+    size_mb = factors.nbytes / 1e6
+    print(f"✅ Saved {factors.shape} factors ({size_mb:.1f} MB) in {time.time() - t0:.1f}s")
+
 
 if __name__ == "__main__":
-    train_collaborative_engine()
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--ratings", default="processed/ratings_filtered.csv", help="MovieLens ratings.csv")
+    parser.add_argument("--out", default="models", help="output directory")
+    parser.add_argument("--factors", type=int, default=64, help="latent dimensions")
+    parser.add_argument("--min-ratings", type=int, default=5, help="drop movies with fewer ratings")
+    parser.add_argument("--catalog", default="processed/movies_processed.csv",
+                        help="limit to movies in the app catalog")
+    a = parser.parse_args()
+    train(a.ratings, a.out, a.factors, a.min_ratings, a.catalog)
