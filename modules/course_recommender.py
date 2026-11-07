@@ -79,10 +79,32 @@ class CourseEngine:
         order = np.lexsort((-candidates["rating"].to_numpy(), -overlap.to_numpy()))[:top_n]
         picked = candidates.iloc[order]
         max_overlap = max(len(target_words), 1)
-        return [
-            {**self._format(row), "similarity": round(min(0.98, 0.5 + 0.5 * ov / max_overlap), 4)}
-            for row, ov in zip(picked.to_dict("records"), overlap.iloc[order])
-        ]
+        stop = {"with", "from", "course", "complete", "ultimate", "beginner", "beginners", "advanced",
+                "learn", "guide", "masterclass", "bootcamp", "your", "build", "full", "basics", "scratch",
+                "novice", "professional", "introduction", "tutorial", "training", "class"}
+        results = []
+        for row, ov in zip(picked.to_dict("records"), overlap.iloc[order]):
+            reasons = []
+            if row["category"] == target["category"]:
+                reasons.append(f"Also {row['category']}")
+            if row["platform"] == target["platform"]:
+                reasons.append(f"On {row['platform']}")
+            words = sorted(
+                (w for w in target_words & row["title_words"] if w.isalpha() and len(w) >= 4 and w not in stop),
+                key=len, reverse=True,
+            )[:2]
+            if words:
+                reasons.append("Covers " + ", ".join(words))
+            results.append({
+                **self._format(row),
+                "similarity": round(min(0.98, 0.5 + 0.5 * ov / max_overlap), 4),
+                "reasons": reasons or ["Popular with learners"],
+            })
+        return results
+
+    def get_item(self, course_id) -> dict | None:
+        idx = self.id_to_idx.get(int(course_id))
+        return None if idx is None else self._format(self.df.iloc[idx].to_dict())
 
     def discover(self, limit: int = 24, offset: int = 0) -> list[dict]:
         if self.df.empty:

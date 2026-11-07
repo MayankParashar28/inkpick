@@ -27,3 +27,9 @@ class AudioService:
 
     def random_pick(self):
         return self.engine.random_pick()
+
+    def get_item(self, item_id):
+        return self.engine.get_item(item_id)
+
+    def mood(self, **kwargs):
+        return self.engine.mood(**kwargs)

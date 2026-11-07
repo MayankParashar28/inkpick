@@ -45,6 +45,12 @@ class MovieEngine:
                     self.df[col] = -1
 
         self.all_genres = set().union(*self.df["genres_norm"])
+        # Precomputed genre -> row indices (popular titles with posters first)
+        has_tmdb = self.df["tmdbId"].to_numpy() > 0
+        self.genre_mask = {
+            g: self.df["genres_norm"].apply(lambda gs, g=g: g in gs).to_numpy() for g in self.all_genres
+        }
+        self.genre_index = {g: np.flatnonzero(m & has_tmdb) for g, m in self.genre_mask.items()}
         self.id_to_idx = {int(m): i for i, m in enumerate(self.df["movieId"])}
 
         # Discovery pool: movies with valid TMDB IDs (posters)
@@ -80,8 +86,7 @@ class MovieEngine:
         q = query.lower().strip()
         if q in self.all_genres:
             # Genre pills (e.g. "Comedy", "Sci-Fi") search by genre, not title
-            genre_mask = self.df["genres_norm"].apply(lambda gs: q in gs)
-            hits = self.df[genre_mask & self.df["tmdbId"].gt(0)]
+            hits = self.df.iloc[self.genre_index[q][:limit]]
         else:
             hits = self.df[self.df["title_norm"].str.contains(q, na=False, regex=False)]
         results = [self._format(row) for row in hits.head(limit).to_dict("records")]
@@ -105,16 +110,36 @@ class MovieEngine:
             return []
 
         if genre:
-            g = genre.lower()
-            allowed = self.df["genres_norm"].apply(lambda gs: g in gs).to_numpy()
+            allowed = self.genre_mask.get(genre.lower())
+            if allowed is None:
+                return []
             scores = np.where(allowed, scores, 0.0)
 
         top = top_n_indices(scores, top_n, exclude_idx=idx)
+        seed = self.df.iloc[idx]
         rows = self.df.iloc[top].to_dict("records")
         return [
-            self._format(row, score=self._normalize_score(float(scores[i])), mode="content")
+            {
+                **self._format(row, score=self._normalize_score(float(scores[i])), mode="content"),
+                "reasons": self._explain(seed, row),
+            }
             for row, i in zip(rows, top)
         ]
+
+    @staticmethod
+    def _explain(seed, row) -> list[str]:
+        """Human-readable reasons why `row` matched `seed` (shared metadata)."""
+        reasons = []
+        shared = [g for g in row["genres_list"] if g.lower() in seed["genres_norm"]]
+        if shared:
+            reasons.append("Both " + " + ".join(shared[:3]))
+        franchise = re.sub(r"\s*\(\d{4}\)$", "", str(seed["title"])).split(":")[0].strip().lower()
+        if len(franchise) > 3 and franchise in str(row["title"]).lower():
+            reasons.append("Same franchise")
+        sy, ry = seed.get("release_year"), row.get("release_year")
+        if pd.notna(sy) and pd.notna(ry) and abs(sy - ry) <= 5:
+            reasons.append(f"Same era ({int(ry) // 10 * 10}s)")
+        return reasons or ["Similar themes & tags"]
 
     def discover(self, limit: int = 24, offset: int = 0) -> list[dict]:
         """Return a deterministic page of movies from the discovery pool."""
@@ -126,6 +151,10 @@ class MovieEngine:
         if not self.discover_pool:
             return None
         return self._format(self.df.iloc[random.choice(self.discover_pool)].to_dict())
+
+    def get_item(self, movie_id: int) -> dict | None:
+        idx = self.id_to_idx.get(movie_id)
+        return None if idx is None else self._format(self.df.iloc[idx].to_dict())
 
     def get_by_ids(self, movie_ids) -> list[dict]:
         """Look up movies by movieId, preserving order and skipping unknowns."""

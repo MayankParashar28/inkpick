@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import FastAPI, Header, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -17,7 +17,7 @@ from modules.utils import sanitize_query
 from services.audio_service import AudioService
 from services.cinema_service import CinemaService
 from services.edu_service import EduService
-from services.tmdb import TMDBService
+from services.tmdb import TMDBService, slim
 
 load_dotenv()
 
@@ -85,6 +85,26 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+
+@app.middleware("http")
+async def cache_headers(request: Request, call_next):
+    """Let browsers cache static assets and short-lived API reads."""
+    response = await call_next(request)
+    path = request.url.path
+    if response.status_code == 200 and "cache-control" not in response.headers:
+        if path.startswith(("/static/vendor/", "/static/assets/")):
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        elif path.startswith("/static/"):
+            # index.html revalidates; css/js are versioned via ?v=
+            response.headers["Cache-Control"] = (
+                "no-cache" if path.endswith(".html") else "public, max-age=86400"
+            )
+        elif path.startswith(("/api/v1/discover/", "/api/v1/recommend/", "/api/v1/search/",
+                              "/api/v1/item/", "/api/v1/tmdb/movie/", "/api/v1/songs/mood")):
+            response.headers["Cache-Control"] = "public, max-age=300"
+    return response
+
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
@@ -133,7 +153,7 @@ async def list_categories():
 @app.get("/api/v1/tmdb/movie/{tmdb_id}")
 async def get_tmdb_movie(tmdb_id: int):
     """Proxy request to TMDB to hide the API key and cache metadata."""
-    return await tmdb_service.get_movie_details(tmdb_id)
+    return slim(await tmdb_service.get_movie_details(tmdb_id))
 
 
 @app.post("/api/v1/tmdb/batch")
@@ -141,7 +161,8 @@ async def batch_tmdb(payload: BatchRequest):
     """Batch fetch TMDB details for up to 50 movies at once."""
     if not payload.ids:
         return {"results": {}}
-    return {"results": await tmdb_service.batch_get_movie_details(payload.ids)}
+    batch = await tmdb_service.batch_get_movie_details(payload.ids)
+    return {"results": {k: slim(v) for k, v in batch.items()}}
 
 
 @app.get("/api/v1/search/{domain}")
@@ -217,6 +238,29 @@ async def discover_content(
     engine = get_engine_or_404(content_type)
     results = engine.discover(limit=limit, offset=offset)
     return {"results": await maybe_enrich(content_type, results)}
+
+
+@app.get("/api/v1/item/{content_type}/{item_id}")
+async def get_item(content_type: str, item_id: str):
+    """Look up a single item (used for shareable deep links)."""
+    engine = get_engine_or_404(content_type)
+    item = engine.get_item(parse_item_id(engine, content_type, item_id))
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found.")
+    enriched = await maybe_enrich(content_type, [item])
+    return {"result": enriched[0]}
+
+
+@app.get("/api/v1/songs/mood")
+async def song_mood(
+    energy: Optional[float] = Query(None, ge=0, le=1),
+    danceability: Optional[float] = Query(None, ge=0, le=1),
+    tempo: Optional[float] = Query(None, ge=40, le=220),
+    limit: int = Query(24, ge=1, le=MAX_LIMIT),
+):
+    """🎚️ Mood mixer: songs closest to a target energy / danceability / tempo."""
+    audio = get_engine_or_404("songs")
+    return {"results": audio.mood(energy=energy, danceability=danceability, tempo=tempo, limit=limit)}
 
 
 @app.get("/api/v1/surprise/{content_type}")

@@ -37,3 +37,6 @@ class CinemaService:
 
     def random_pick(self):
         return self.movie_engine.random_pick()
+
+    def get_item(self, item_id):
+        return self.movie_engine.get_item(item_id)

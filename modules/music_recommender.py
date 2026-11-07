@@ -43,6 +43,11 @@ class MusicEngine:
 
         self.row_map = build_row_map(self.indptr, self.num_rows)
 
+        # Normalized audio features for the mood mixer
+        self._energy = self.df["energy"].fillna(0).to_numpy(np.float32)
+        self._dance = self.df["danceability"].fillna(0).to_numpy(np.float32)
+        self._tempo = np.clip(self.df["tempo"].fillna(0).to_numpy(np.float32) / self.MOOD_TEMPO_MAX, 0, 1)
+
         self._fuzzy_choices = (
             self.df["name"].iloc[:40000].tolist()
             + self.df["artists_clean"].iloc[:5000].unique().tolist()
@@ -69,8 +74,54 @@ class MusicEngine:
         if scores is None:
             return []
         top = top_n_indices(scores, top_n, exclude_idx=idx)
+        seed = self.df.iloc[idx]
         rows = self.df.iloc[top].to_dict("records")
-        return [self._format(row, scores[i]) for row, i in zip(rows, top)]
+        return [{**self._format(row, scores[i]), "reasons": self._explain(seed, row)} for row, i in zip(rows, top)]
+
+    @staticmethod
+    def _explain(seed, row) -> list[str]:
+        reasons = []
+        seed_artists = {a.strip().lower() for a in str(seed["artists_clean"]).split(";")}
+        shared = [a.strip() for a in str(row["artists_clean"]).split(";") if a.strip().lower() in seed_artists]
+        if shared:
+            reasons.append(f"Also by {shared[0]}")
+        if abs(safe_float(seed["tempo"]) - safe_float(row["tempo"])) <= 8:
+            reasons.append(f"Similar tempo (~{round(safe_float(row['tempo']))} BPM)")
+        if abs(safe_float(seed["energy"]) - safe_float(row["energy"])) <= 0.1:
+            reasons.append("Matching energy")
+        if abs(safe_float(seed["year"]) - safe_float(row["year"])) <= 2:
+            reasons.append(f"Same period ({int(safe_float(row['year']))})")
+        return reasons or ["Similar style & keywords"]
+
+    # ── Mood mixer ──────────────────────────────────────────────────
+    MOOD_TEMPO_MAX = 220.0
+
+    def mood(self, energy=None, danceability=None, tempo=None, limit: int = 24) -> list[dict]:
+        """Songs closest to a target mood (energy/danceability 0-1, tempo in BPM)."""
+        dims = []
+        if energy is not None:
+            dims.append((self._energy, float(energy)))
+        if danceability is not None:
+            dims.append((self._dance, float(danceability)))
+        if tempo is not None:
+            dims.append((self._tempo, float(tempo) / self.MOOD_TEMPO_MAX))
+        if not dims or self.df.empty:
+            return self.discover(limit=limit)
+        dist = np.zeros(len(self.df), dtype=np.float32)
+        for col, target in dims:
+            dist += (col - target) ** 2
+        k = min(limit, len(dist))
+        top = np.argpartition(dist, k - 1)[:k]
+        top = top[np.argsort(dist[top])]
+        rows = self.df.iloc[top].to_dict("records")
+        return [
+            {**self._format(row), "similarity": round(float(max(0.0, 1 - np.sqrt(dist[i] / len(dims)))), 4)}
+            for row, i in zip(rows, top)
+        ]
+
+    def get_item(self, song_id: str) -> dict | None:
+        idx = self.id_to_idx.get(song_id)
+        return None if idx is None else self._format(self.df.iloc[idx].to_dict())
 
     def discover(self, limit: int = 24, offset: int = 0) -> list[dict]:
         return [self._format(row) for row in self.df.iloc[offset: offset + limit].to_dict("records")]

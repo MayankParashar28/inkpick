@@ -6,6 +6,20 @@ from typing import Any, Dict, Iterable
 import httpx
 
 
+# Only the fields the frontend uses — cuts payloads by ~75%
+SLIM_FIELDS = ("id", "title", "poster_path", "backdrop_path", "overview", "tagline",
+               "release_date", "runtime", "vote_average")
+
+
+def slim(meta: Dict[str, Any] | None) -> Dict[str, Any] | None:
+    if not meta:
+        return meta
+    out = {k: meta.get(k) for k in SLIM_FIELDS if k in meta}
+    if meta.get("genres"):
+        out["genres"] = [g.get("name") for g in meta["genres"] if isinstance(g, dict)]
+    return out
+
+
 def _stub(tmdb_id: int) -> Dict[str, Any]:
     return {"id": tmdb_id, "title": "Unknown", "poster_path": None, "overview": "", "vote_average": 0}
 
@@ -116,7 +130,7 @@ class TMDBService:
             for r in items:
                 meta = batch.get(str(r.get("tmdbId")))
                 if meta:
-                    r["cached"] = meta
+                    r["cached"] = slim(meta)
         return items
 
     def update_cache(self, tmdb_id: int, data: dict):
