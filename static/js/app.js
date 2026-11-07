@@ -1,7 +1,8 @@
 /**
  * Inkpick — Hand-Drawn Discovery Hub
- * Features: discovery, search, "More like this" with match reasons,
- * saved sketchbook, shareable deep links, song mood mixer, 3D mascot.
+ * Features: discovery, live search suggestions, "More like this" with match
+ * reasons, saved sketchbook + "Because you saved", shareable deep links,
+ * song mood mixer, movie trailers, chalkboard dark mode, 3D mascot.
  */
 
 const DOMAINS = ['movies', 'songs', 'courses'];
@@ -11,6 +12,7 @@ const POSTER_SM = 'https://image.tmdb.org/t/p/w342';
 const POSTER_LG = 'https://image.tmdb.org/t/p/w500';
 const CACHE_MAX = 500;
 const SAVED_KEY = 'inkpick:saved:v1';
+const THEME_KEY = 'inkpick:theme';
 const MASCOT_SRC = '/static/vendor/model-viewer-4.3.1.min.js';
 
 const CATEGORIES = {
@@ -42,6 +44,8 @@ let lastHash = null;
 let searchSeq = 0;
 let similarSeq = 0;
 let detailSeq = 0;
+let suggestSeq = 0;
+let becauseSeq = 0;
 let currentDetail = null;               // { domain, item }
 const metaCache = {};                   // tmdbId -> slim TMDB metadata
 const pageCache = new Map();            // `${tab}:${offset}` -> items
@@ -153,6 +157,12 @@ function toggleSave(item) {
     syncSaveButtons(domainOf(item), idOf(item));
     talk(saved ? 'Pinned to your sketchbook! 📌' : 'Erased from your sketchbook. ✏️', saved ? 'ThumbsUp' : 'No');
     if (currentTab === 'saved') renderSaved();
+    else if (!document.getElementById('because').hidden || saved) renderBecauseIfBrowsing();
+}
+
+function renderBecauseIfBrowsing() {
+    // Only refresh on the plain discovery view (not search/mood results)
+    if (gridHeader.textContent === 'Trending Sketches') renderBecause();
 }
 
 // ── Init ─────────────────────────────────────────────
@@ -169,22 +179,19 @@ document.addEventListener('DOMContentLoaded', () => {
     Saved.load();
     updateSavedCount();
 
-    input?.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            handleSearch(input.value.trim());
-        }
-    });
+    initSuggestions();
+    initTheme();
     document.getElementById('btn-load-more')?.addEventListener('click', () => fetchDiscovery(true));
     document.getElementById('btn-surprise')?.addEventListener('click', surpriseMe);
     document.getElementById('det-close')?.addEventListener('click', closeDetail);
     document.getElementById('det-save')?.addEventListener('click', () => currentDetail && toggleSave(currentDetail.item));
     document.getElementById('det-share')?.addEventListener('click', shareCurrent);
+    document.getElementById('det-trailer')?.addEventListener('click', playTrailer);
     window.addEventListener('keydown', (e) => {
         if (e.key === '/' && !['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) {
             e.preventDefault();
             input?.focus();
-        } else if (e.key === 'Escape' && !detailView.hidden) {
+        } else if (e.key === 'Escape' && document.activeElement !== input && !detailView.hidden) {
             closeDetail();
         }
     });
@@ -247,6 +254,8 @@ function switchTab(tab) {
     }
 
     const isSaved = tab === 'saved';
+    hideBecause();
+    closeSuggestions();
     document.getElementById('pill-bar').hidden = isSaved;
     document.getElementById('spotlight-section').hidden = isSaved;
     moodMixer.hidden = tab !== 'songs';
@@ -311,6 +320,7 @@ async function fetchDiscovery(append = false) {
         if (!append) {
             renderSpotlight(items[0]);
             renderItems(items.slice(1));
+            renderBecause();
         } else {
             renderItems(items, true);
         }
@@ -340,6 +350,8 @@ async function handleSearch(q) {
     if (q.length < 2) return;
     const seq = ++searchSeq;
     const tab = currentTab;
+    closeSuggestions();
+    hideBecause();
     talk('Pencil at the ready... 🖋️', 'Walking');
     try {
         const data = await getJSON(`/api/v1/search/${tab}?q=${encodeURIComponent(q)}&limit=24`);
@@ -421,6 +433,7 @@ function initMoodMixer() {
 
 async function fetchMood(energy, dance, tempo, label = null) {
     const seq = ++searchSeq;
+    hideBecause();
     try {
         const qs = new URLSearchParams({ energy, danceability: dance, tempo, limit: 24 });
         const data = await getJSON(`/api/v1/songs/mood?${qs}`);
@@ -459,6 +472,7 @@ function renderPills() {
 function renderSaved(filter = '') {
     gridHeader.textContent = 'My Sketchbook';
     loadMoreWrap.hidden = true;
+    hideBecause();
     const q = filter.trim().toLowerCase();
     const entries = Saved.items.filter(s => !q || `${s.item.title} ${s.item.artist || ''}`.toLowerCase().includes(q));
     if (!Saved.items.length) {
@@ -471,6 +485,8 @@ function renderSaved(filter = '') {
     }
     entries.forEach(s => rememberItem(s.item));
     renderItems(entries.map(s => s.item));
+    if (!q) renderBecause();
+    else hideBecause();
 }
 
 function posterUrl(meta, size = POSTER_SM) {
@@ -597,6 +613,7 @@ async function openItemById(domain, id) {
 }
 
 function hideDetail() {
+    resetTrailer();
     if (detailView) detailView.hidden = true;
     currentDetail = null;
     similarSeq++;
@@ -631,6 +648,7 @@ async function selectItem(item, { push = true } = {}) {
     const seq = ++detailSeq;
     currentDetail = { domain, item };
     if (push) navigate(itemHash(currentTab === 'saved' ? 'saved' : domain, domain, id));
+    resetTrailer();
 
     detailView.hidden = false;
     document.getElementById('det-title').textContent = item.title;
@@ -706,6 +724,7 @@ async function selectItem(item, { push = true } = {}) {
         playLink.hidden = true;
     }
 
+    if (domain === 'movies') loadTrailerButton(item, seq);
     syncSaveButtons(domain, id);
     detailView.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
     loadSimilar(item);
@@ -737,6 +756,234 @@ async function loadSimilar(item) {
             ? '<p class="similar-empty">No similar sketches yet for this one.</p>'
             : '<p class="similar-empty">Couldn\'t load similar picks right now.</p>';
     }
+}
+
+// ── Theme (chalkboard dark mode) ─────────────────────
+function currentTheme() {
+    const forced = document.documentElement.dataset.theme;
+    if (forced) return forced;
+    return matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
+function applyThemeUi() {
+    const btn = document.getElementById('theme-toggle');
+    const dark = currentTheme() === 'dark';
+    if (btn) {
+        btn.textContent = dark ? '☀️' : '🌙';
+        btn.setAttribute('aria-label', dark ? 'Switch to light mode' : 'Switch to dark mode');
+    }
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#1e2420' : '#fdfbf7');
+}
+
+function initTheme() {
+    applyThemeUi();
+    matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', applyThemeUi);
+    document.getElementById('theme-toggle')?.addEventListener('click', () => {
+        const next = currentTheme() === 'dark' ? 'light' : 'dark';
+        document.documentElement.dataset.theme = next;
+        try { localStorage.setItem(THEME_KEY, next); } catch { /* private mode */ }
+        applyThemeUi();
+        talk(next === 'dark' ? 'Chalkboard mode! 🖍️' : 'Fresh paper! 📄', 'Yes');
+    });
+}
+
+// ── Live search suggestions (combobox) ───────────────
+let suggestItems = [];
+let suggestActive = -1;
+
+function initSuggestions() {
+    const list = document.getElementById('suggest-list');
+    if (!input || !list) return;
+    const run = debounce(() => fetchSuggestions(input.value.trim()), 150);
+
+    input.addEventListener('input', run);
+    input.addEventListener('focus', () => { if (suggestItems.length) openSuggestions(); });
+    input.addEventListener('keydown', (e) => {
+        const open = !list.hidden;
+        if (e.key === 'ArrowDown' && open) {
+            e.preventDefault();
+            setActiveSuggestion(Math.min(suggestActive + 1, suggestItems.length));
+        } else if (e.key === 'ArrowUp' && open) {
+            e.preventDefault();
+            setActiveSuggestion(Math.max(suggestActive - 1, -1));
+        } else if (e.key === 'Enter') {
+            e.preventDefault();
+            if (open && suggestActive >= 0 && suggestActive < suggestItems.length) {
+                chooseSuggestion(suggestItems[suggestActive]);
+            } else {
+                closeSuggestions();
+                handleSearch(input.value.trim());
+            }
+        } else if (e.key === 'Escape') {
+            if (open) { e.preventDefault(); closeSuggestions(); }
+        }
+    });
+    // Option clicks: mousedown fires before the input blurs
+    list.addEventListener('mousedown', (e) => {
+        const li = e.target.closest('[data-index]');
+        if (!li) return;
+        e.preventDefault();
+        const i = Number(li.dataset.index);
+        if (i === suggestItems.length) {
+            closeSuggestions();
+            handleSearch(input.value.trim());
+        } else {
+            chooseSuggestion(suggestItems[i]);
+        }
+    });
+    input.addEventListener('blur', () => setTimeout(closeSuggestions, 120));
+}
+
+async function fetchSuggestions(q) {
+    const seq = ++suggestSeq;
+    if (q.length < 2) { suggestItems = []; closeSuggestions(); return; }
+    let items = [];
+    if (currentTab === 'saved') {
+        const lq = q.toLowerCase();
+        items = Saved.items.map(s => s.item).filter(i => `${i.title} ${i.artist || ''}`.toLowerCase().includes(lq)).slice(0, 8);
+    } else {
+        try {
+            const data = await getJSON(`/api/v1/suggest/${currentTab}?q=${encodeURIComponent(q)}&limit=8`);
+            items = data.results || [];
+        } catch { return; }
+    }
+    if (seq !== suggestSeq || input.value.trim() !== q) return;
+    suggestItems = items;
+    renderSuggestions(q);
+}
+
+function highlight(text, q) {
+    const t = String(text ?? '');
+    const i = t.toLowerCase().indexOf(q.toLowerCase());
+    if (i < 0) return escapeHtml(t);
+    return escapeHtml(t.slice(0, i)) + `<mark>${escapeHtml(t.slice(i, i + q.length))}</mark>` + escapeHtml(t.slice(i + q.length));
+}
+
+function renderSuggestions(q) {
+    const list = document.getElementById('suggest-list');
+    if (!list) return;
+    suggestActive = -1;
+    const rows = suggestItems.map((item, i) => {
+        const domain = domainOf(item);
+        const sub = domain === 'movies' ? (item.releaseYear || '') : (item.artist || '');
+        return `<li id="suggest-${i}" class="suggest-option" role="option" aria-selected="false" data-index="${i}">
+            <span>${highlight(item.title, q)}</span><span class="suggest-sub">${escapeHtml(sub)}</span></li>`;
+    });
+    if (currentTab !== 'saved') {
+        rows.push(`<li id="suggest-${suggestItems.length}" class="suggest-option suggest-all" role="option" aria-selected="false" data-index="${suggestItems.length}">🔍 Search all for “${escapeHtml(q)}”</li>`);
+    }
+    if (!rows.length) { closeSuggestions(); return; }
+    list.innerHTML = rows.join('');
+    openSuggestions();
+}
+
+function setActiveSuggestion(i) {
+    const list = document.getElementById('suggest-list');
+    suggestActive = i;
+    list.querySelectorAll('.suggest-option').forEach((li, idx) => li.setAttribute('aria-selected', String(idx === i)));
+    const active = document.getElementById(`suggest-${i}`);
+    if (active) {
+        input.setAttribute('aria-activedescendant', active.id);
+        active.scrollIntoView({ block: 'nearest' });
+    } else {
+        input.removeAttribute('aria-activedescendant');
+    }
+}
+
+function openSuggestions() {
+    const list = document.getElementById('suggest-list');
+    if (!list || !list.children.length) return;
+    list.hidden = false;
+    input.setAttribute('aria-expanded', 'true');
+}
+
+function closeSuggestions() {
+    const list = document.getElementById('suggest-list');
+    if (list) list.hidden = true;
+    input?.setAttribute('aria-expanded', 'false');
+    input?.removeAttribute('aria-activedescendant');
+    suggestActive = -1;
+}
+
+function chooseSuggestion(item) {
+    closeSuggestions();
+    rememberItem(item);
+    selectItem(item);
+}
+
+// ── "Because you saved …" ────────────────────────────
+function hideBecause() {
+    becauseSeq++;
+    const row = document.getElementById('because');
+    if (row) row.hidden = true;
+}
+
+async function renderBecause() {
+    const row = document.getElementById('because');
+    const target = document.getElementById('because-results');
+    if (!row || !target) return;
+    const seq = ++becauseSeq;
+    const tab = currentTab;
+    // Most recent save in this category (or any category on the Sketchbook tab)
+    const seed = Saved.items.find(s => tab === 'saved' || s.domain === tab);
+    if (!seed) { row.hidden = true; return; }
+
+    try {
+        const data = await getJSON(`/api/v1/recommend/${seed.domain}/${encodeURIComponent(seed.id)}?limit=10`);
+        if (seq !== becauseSeq || tab !== currentTab) return;
+        const recs = (data.recommendations || []).filter(r => !Saved.has(domainOf(r), idOf(r))).slice(0, 6);
+        if (!recs.length) { row.hidden = true; return; }
+        document.getElementById('because-title').textContent = `Because you saved “${seed.item.title}”`;
+        renderItems(recs, false, target);
+        fetchMissingMeta(recs);
+        row.hidden = false;
+    } catch {
+        if (seq === becauseSeq) row.hidden = true;
+    }
+}
+
+// ── Trailers ─────────────────────────────────────────
+let pendingTrailer = null;
+
+function resetTrailer() {
+    pendingTrailer = null;
+    const btn = document.getElementById('det-trailer');
+    const wrap = document.getElementById('trailer-wrap');
+    if (btn) btn.hidden = true;
+    if (wrap) { wrap.hidden = true; wrap.innerHTML = ''; }   // stops playback
+}
+
+async function loadTrailerButton(item, seq) {
+    const btn = document.getElementById('det-trailer');
+    if (!btn) return;
+    const query = encodeURIComponent(`${item.title} official trailer`);
+    const searchUrl = `https://www.youtube.com/results?search_query=${query}`;
+    let trailer = null;
+    if (item.tmdbId > 0) {
+        try {
+            trailer = (await getJSON(`/api/v1/movies/${item.tmdbId}/trailer`)).trailer;
+        } catch { /* fall back to search */ }
+    }
+    if (seq !== detailSeq) return;
+    pendingTrailer = trailer ? { key: trailer.key } : { searchUrl };
+    btn.textContent = trailer ? '🎞️ Watch trailer' : '🎞️ Find trailer';
+    btn.hidden = false;
+}
+
+function playTrailer() {
+    if (!pendingTrailer) return;
+    if (pendingTrailer.searchUrl) {
+        window.open(pendingTrailer.searchUrl, '_blank', 'noopener');
+        return;
+    }
+    const wrap = document.getElementById('trailer-wrap');
+    const key = encodeURIComponent(pendingTrailer.key);
+    wrap.innerHTML = `<div class="trailer-frame"><iframe src="https://www.youtube-nocookie.com/embed/${key}?autoplay=1&rel=0"
+        title="Trailer for ${escapeHtml(currentDetail?.item.title || 'movie')}" loading="lazy"
+        allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe></div>`;
+    wrap.hidden = false;
+    wrap.scrollIntoView({ behavior: prefersReducedMotion() ? 'auto' : 'smooth', block: 'center' });
+    talk('Popcorn time! 🍿', 'Dance');
 }
 
 // ── TMDB metadata backfill ───────────────────────────

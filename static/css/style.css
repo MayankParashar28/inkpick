@@ -7,10 +7,15 @@
     --secondary: #2d5da1;
     --paper-white: #ffffff;
     --post-it-yellow: #fff9c4;
+    --shadow-color: var(--foreground);
+    --nav-bg: rgba(253, 251, 247, 0.9);
+    --grid-line: rgba(45, 45, 45, 0.05);
+    --tape: rgba(229, 224, 216, 0.6);
+    --muted-text: #6b6b6b;
     --border-width: 3px;
-    --shadow-hard: 4px 4px 0px 0px var(--foreground);
-    --shadow-hard-lg: 8px 8px 0px 0px var(--foreground);
-    --shadow-hard-hover: 2px 2px 0px 0px var(--foreground);
+    --shadow-hard: 4px 4px 0px 0px var(--shadow-color);
+    --shadow-hard-lg: 8px 8px 0px 0px var(--shadow-color);
+    --shadow-hard-hover: 2px 2px 0px 0px var(--shadow-color);
     --font-header: 'Kalam', cursive;
     --font-body: 'Patrick Hand', cursive;
     --wobbly: 255px 15px 225px 15px / 15px 225px 15px 255px;
@@ -59,7 +64,7 @@ nav {
     gap: 40px;
     position: sticky;
     top: 0;
-    background: rgba(253, 251, 247, 0.9);
+    background: var(--nav-bg);
     backdrop-filter: blur(8px);
     z-index: 100;
     border-bottom: var(--border-width) dashed var(--foreground);
@@ -273,7 +278,7 @@ main {
     font-weight: 700;
     border: 2px solid var(--foreground);
     transform: rotate(5deg);
-    box-shadow: 2px 2px 0px var(--foreground);
+    box-shadow: 2px 2px 0px var(--shadow-color);
     z-index: 5;
     text-transform: capitalize;
 }
@@ -432,12 +437,12 @@ main {
     font-weight: 700;
     cursor: pointer;
     transition: var(--transition);
-    box-shadow: 3px 3px 0px var(--foreground);
+    box-shadow: 3px 3px 0px var(--shadow-color);
 }
 
 .pill:hover {
     transform: translate(-1px, -1px) rotate(1deg);
-    box-shadow: 5px 5px 0px var(--foreground);
+    box-shadow: 5px 5px 0px var(--shadow-color);
     background: var(--muted);
 }
 
@@ -565,14 +570,14 @@ main {
     font-size: 1.3rem;
     border: 3px solid var(--foreground);
     border-radius: var(--wobbly-md);
-    box-shadow: 6px 6px 0px var(--foreground);
+    box-shadow: 6px 6px 0px var(--shadow-color);
     transition: var(--transition);
     cursor: pointer;
 }
 
 .play-btn:hover {
     transform: translate(-2px, -2px) scale(1.05);
-    box-shadow: 8px 8px 0px var(--foreground);
+    box-shadow: 8px 8px 0px var(--shadow-color);
     background: #ff5252;
 }
 
@@ -610,7 +615,7 @@ main {
 }
 
 .sketch-canvas.graph-paper {
-    background-image: linear-gradient(rgba(45, 45, 45, 0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(45, 45, 45, 0.05) 1px, transparent 1px);
+    background-image: linear-gradient(var(--grid-line) 1px, transparent 1px), linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
     background-size: 20px 20px;
 }
 
@@ -660,7 +665,7 @@ main {
     font-size: 0.75rem;
     font-weight: 700;
     background: var(--paper-white);
-    box-shadow: 1px 1px 0px var(--foreground);
+    box-shadow: 1px 1px 0px var(--shadow-color);
     margin-right: 6px;
     margin-top: 6px;
     font-family: var(--font-header);
@@ -690,7 +695,7 @@ main {
     border-radius: 4px 10px 4px 10px / 10px 4px 10px 4px;
     font-size: 0.8rem;
     font-weight: 700;
-    box-shadow: 2px 2px 0px var(--foreground);
+    box-shadow: 2px 2px 0px var(--shadow-color);
     font-family: var(--font-header);
 }
 
@@ -699,7 +704,7 @@ main {
     position: absolute;
     width: 100px;
     height: 35px;
-    background: rgba(229, 224, 216, 0.6);
+    background: var(--tape);
     backdrop-filter: blur(1px);
     z-index: 10;
     pointer-events: none;
@@ -861,13 +866,13 @@ main {
     border: 2px solid var(--foreground);
     padding: 10px 30px;
     cursor: pointer;
-    box-shadow: 4px 4px 0px var(--foreground);
+    box-shadow: 4px 4px 0px var(--shadow-color);
     transition: var(--transition);
 }
 
 .btn-load-more:hover {
     transform: translate(-2px, -2px);
-    box-shadow: 6px 6px 0px var(--foreground);
+    box-shadow: 6px 6px 0px var(--shadow-color);
 }
 
 
@@ -887,13 +892,13 @@ main {
     border-radius: var(--wobbly-md);
     padding: 8px 20px;
     cursor: pointer;
-    box-shadow: 4px 4px 0px var(--foreground);
+    box-shadow: 4px 4px 0px var(--shadow-color);
     transition: var(--transition);
 }
 
 .btn-surprise:hover {
     transform: translate(-2px, -2px) rotate(-1deg);
-    box-shadow: 6px 6px 0px var(--foreground);
+    box-shadow: 6px 6px 0px var(--shadow-color);
 }
 
 .btn-surprise:focus-visible,
@@ -920,7 +925,7 @@ main {
 
 .similar-empty {
     font-family: var(--font-body);
-    color: #777;
+    color: var(--muted-text);
 }
 
 .match-score {
@@ -997,7 +1002,7 @@ a.logo {
     background: var(--paper-white);
     border: 2px solid var(--foreground);
     border-radius: 50% 45% 50% 40%;
-    box-shadow: 2px 2px 0 var(--foreground);
+    box-shadow: 2px 2px 0 var(--shadow-color);
     cursor: pointer;
     transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
@@ -1059,14 +1064,14 @@ a.logo {
     background: var(--paper-white);
     border: 2px solid var(--foreground);
     border-radius: var(--wobbly-md);
-    box-shadow: 3px 3px 0 var(--foreground);
+    box-shadow: 3px 3px 0 var(--shadow-color);
     cursor: pointer;
     transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 
 .ghost-btn:hover {
     transform: translate(-1px, -1px);
-    box-shadow: 5px 5px 0 var(--foreground);
+    box-shadow: 5px 5px 0 var(--shadow-color);
 }
 
 .ghost-btn[aria-pressed="true"] {
@@ -1085,7 +1090,7 @@ a.logo {
     background: var(--paper-white);
     border: 2px solid var(--foreground);
     border-radius: 50% 40% 50% 45%;
-    box-shadow: 2px 2px 0 var(--foreground);
+    box-shadow: 2px 2px 0 var(--shadow-color);
     cursor: pointer;
 }
 
@@ -1202,5 +1207,194 @@ a.logo {
 
     .card-title {
         font-size: 1.05rem;
+    }
+}
+
+
+/* ── Chalkboard (dark) theme ───────────────────────────────────────
+   Applied when the OS prefers dark (unless the user picked light), or
+   when the toggle sets data-theme="dark". */
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+        --bg: #1e2420;
+        --foreground: #ece8df;
+        --muted: #39423c;
+        --accent: #ff7a7a;
+        --secondary: #8fb8f2;
+        --paper-white: #283029;
+        --post-it-yellow: #3b3826;
+        --shadow-color: rgba(0, 0, 0, 0.55);
+        --nav-bg: rgba(30, 36, 32, 0.92);
+        --grid-line: rgba(236, 232, 223, 0.06);
+        --tape: rgba(236, 232, 223, 0.18);
+        --muted-text: #a9aca4;
+        color-scheme: dark;
+    }
+}
+
+:root[data-theme="dark"] {
+    --bg: #1e2420;
+    --foreground: #ece8df;
+    --muted: #39423c;
+    --accent: #ff7a7a;
+    --secondary: #8fb8f2;
+    --paper-white: #283029;
+    --post-it-yellow: #3b3826;
+    --shadow-color: rgba(0, 0, 0, 0.55);
+    --nav-bg: rgba(30, 36, 32, 0.92);
+    --grid-line: rgba(236, 232, 223, 0.06);
+    --tape: rgba(236, 232, 223, 0.18);
+    --muted-text: #a9aca4;
+    color-scheme: dark;
+}
+
+.theme-toggle {
+    flex: none;
+    width: 44px;
+    height: 44px;
+    display: grid;
+    place-items: center;
+    font-size: 1.25rem;
+    color: var(--foreground);
+    background: var(--paper-white);
+    border: 2px solid var(--foreground);
+    border-radius: 50% 40% 50% 45%;
+    box-shadow: 2px 2px 0 var(--shadow-color);
+    cursor: pointer;
+    transition: transform 0.15s ease;
+}
+
+.theme-toggle:hover {
+    transform: rotate(-12deg) scale(1.05);
+}
+
+.theme-toggle:focus-visible {
+    outline: 3px dashed var(--secondary);
+    outline-offset: 3px;
+}
+
+/* ── Live search suggestions ── */
+.nav-search {
+    position: relative;
+}
+
+.suggest-list {
+    position: absolute;
+    top: calc(100% + 10px);
+    left: 0;
+    right: 0;
+    z-index: 200;
+    list-style: none;
+    margin: 0;
+    padding: 6px;
+    max-height: min(420px, 60vh);
+    overflow-y: auto;
+    background: var(--paper-white);
+    border: var(--border-width) solid var(--foreground);
+    border-radius: 14px 6px 14px 6px / 6px 14px 6px 14px;
+    box-shadow: var(--shadow-hard);
+}
+
+.suggest-option {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 44px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-family: var(--font-body);
+    font-size: 1.05rem;
+}
+
+.suggest-option mark {
+    background: none;
+    color: var(--accent);
+    font-weight: 700;
+}
+
+.suggest-option .suggest-sub {
+    flex: none;
+    font-size: 0.85rem;
+    color: var(--muted-text);
+    max-width: 45%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.suggest-option[aria-selected="true"],
+.suggest-option:hover {
+    background: var(--muted);
+}
+
+.suggest-all {
+    border-top: 1px dashed var(--muted);
+    margin-top: 4px;
+    color: var(--secondary);
+    font-weight: 700;
+}
+
+/* ── Because you saved ── */
+.because-row {
+    margin-bottom: 48px;
+    padding: 24px 28px 28px;
+    border: 2px dashed var(--secondary);
+    border-radius: 30px 10px 40px 10px / 10px 40px 10px 30px;
+}
+
+.because-row .grid-header {
+    font-size: 1.6rem;
+    margin-bottom: 24px;
+}
+
+/* ── Trailer ── */
+.trailer-wrap {
+    margin-top: 28px;
+}
+
+.trailer-frame {
+    position: relative;
+    width: 100%;
+    max-width: 860px;
+    aspect-ratio: 16 / 9;
+    border: var(--border-width) solid var(--foreground);
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: var(--shadow-hard);
+    background: #000;
+}
+
+.trailer-frame iframe {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border: 0;
+}
+
+@media (max-width: 768px) {
+    .because-row {
+        padding: 18px 14px;
+    }
+}
+
+/* Nav spacing with the theme toggle */
+@media (min-width: 769px) {
+    nav {
+        gap: 28px;
+    }
+
+    .nav-links {
+        gap: 24px;
+    }
+}
+
+@media (max-width: 768px) {
+    .theme-toggle {
+        position: absolute;
+        top: 14px;
+        right: 14px;
     }
 }
