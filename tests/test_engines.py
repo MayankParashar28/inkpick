@@ -155,3 +155,30 @@ def test_hybrid_cold_start_uses_content(cinema, trained_model):
     recs = HybridEngine(cinema.movie_engine, collab).recommend(2, top_n=4)
     content = cinema.movie_engine.recommend(2, top_n=4)
     assert [r["movieId"] for r in recs] == [r["movieId"] for r in content]
+
+
+# ── Song covers (mocked Spotify oEmbed) ─────────────────
+def test_song_covers_fetch_and_cache(tmp_path):
+    from services.song_covers import SongCoverService, large_cover
+
+    calls = []
+
+    def handler(request):
+        track = request.url.params["url"].rsplit("/", 1)[-1]
+        calls.append(track)
+        if track == "B" * 22:
+            return httpx.Response(404)
+        if track == "C" * 22:
+            return httpx.Response(503)
+        return httpx.Response(200, json={"thumbnail_url": "https://image-cdn-ak.spotifycdn.com/image/ab67616d00001e02abc"})
+
+    svc = SongCoverService(cache_file=str(tmp_path / "covers.json"))
+    svc._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    a, b, c = "A" * 22, "B" * 22, "C" * 22
+    out = asyncio.run(svc.batch([a, b, c, a, "bad id"]))
+    assert out == {a: "https://image-cdn-ak.spotifycdn.com/image/ab67616d00001e02abc", b: None, c: None}
+    assert calls == [a, b, c], "deduplicated, invalid ids skipped"
+    asyncio.run(svc.batch([a, b, c]))
+    assert calls == [a, b, c, c], "hits and 404s are cached; transient errors retried"
+    assert SongCoverService(cache_file=str(tmp_path / "covers.json")).cached(a), "persisted to disk"
+    assert large_cover(out[a]).endswith("ab67616d0000b273abc")

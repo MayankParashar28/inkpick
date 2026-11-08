@@ -18,6 +18,7 @@ from services.audio_service import AudioService
 from services.cinema_service import CinemaService
 from services.edu_service import EduService
 from services.live_movies import LiveMovies, parse_live_id
+from services.song_covers import SongCoverService
 from services.tmdb import TMDBService, slim
 
 load_dotenv()
@@ -37,9 +38,14 @@ class BatchRequest(BaseModel):
     ids: List[int] = Field(default_factory=list, max_length=MAX_LIMIT)
 
 
+class CoverRequest(BaseModel):
+    ids: List[str] = Field(default_factory=list, max_length=MAX_LIMIT)
+
+
 # ── Services ────────────────────────────────────────────────────
 registry = InkpickRegistry()
 tmdb_service = TMDBService()
+song_covers = SongCoverService()
 
 
 def load_services(data_path: str, model_path: str):
@@ -78,6 +84,7 @@ async def lifespan(app: FastAPI):
 
     yield
     await tmdb_service.close()
+    await song_covers.close()
 
 
 app = FastAPI(
@@ -127,7 +134,11 @@ def parse_item_id(engine, domain: str, item_id: str):
 
 
 async def maybe_enrich(domain: str, items: list) -> list:
-    return await tmdb_service.enrich(items) if domain == "movies" else items
+    if domain == "movies":
+        return await tmdb_service.enrich(items)
+    if domain == "songs":
+        return song_covers.attach(items)   # cached album art only; the rest load lazily
+    return items
 
 
 # ── Routes ──────────────────────────────────────────────────────
@@ -203,6 +214,12 @@ async def suggest(
     if len(q) < 2:
         return {"results": []}
     return {"results": engine.suggest(q, limit=limit)}
+
+
+@app.post("/api/v1/songs/covers")
+async def song_cover_batch(payload: CoverRequest):
+    """🎨 Album covers for up to 50 Spotify track ids: {id: url | null}."""
+    return {"covers": await song_covers.batch(payload.ids)}
 
 
 @app.get("/api/v1/movies/fresh")
@@ -310,7 +327,8 @@ async def song_mood(
 ):
     """🎚️ Mood mixer: songs closest to a target energy / danceability / tempo."""
     audio = get_engine_or_404("songs")
-    return {"results": audio.mood(energy=energy, danceability=danceability, tempo=tempo, limit=limit)}
+    results = audio.mood(energy=energy, danceability=danceability, tempo=tempo, limit=limit)
+    return {"results": song_covers.attach(results)}
 
 
 @app.get("/api/v1/surprise/{content_type}")
