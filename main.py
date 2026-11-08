@@ -18,6 +18,7 @@ from services.audio_service import AudioService
 from services.cinema_service import CinemaService
 from services.edu_service import EduService
 from services.live_movies import LiveMovies, parse_live_id
+from services.itunes import ITunesService
 from services.live_songs import LiveSongs
 from services.song_covers import SongCoverService
 from services.spotify import SpotifyService
@@ -49,6 +50,7 @@ registry = InkpickRegistry()
 tmdb_service = TMDBService()
 song_covers = SongCoverService()
 spotify_service = SpotifyService()
+itunes_service = ITunesService()
 
 
 def load_services(data_path: str, model_path: str):
@@ -68,7 +70,7 @@ async def lifespan(app: FastAPI):
 
     app.state.cinema_service = cinema
     app.state.live_movies = LiveMovies(tmdb_service, cinema.movie_engine)
-    app.state.live_songs = LiveSongs(spotify_service, audio.engine)
+    app.state.live_songs = LiveSongs(spotify_service, audio.engine, itunes_service)
     registry.register("movies", cinema)
     registry.register("songs", audio)
     registry.register("courses", edu)
@@ -90,6 +92,7 @@ async def lifespan(app: FastAPI):
     await tmdb_service.close()
     await song_covers.close()
     await spotify_service.close()
+    await itunes_service.close()
 
 
 app = FastAPI(
@@ -162,6 +165,7 @@ async def health():
         "tmdb_configured": bool(tmdb_service.api_key),
         "spotify_configured": spotify_service.enabled,
         "spotify_error": spotify_service.last_error,
+        "itunes_fallback": itunes_service.enabled,
         "tmdb_cached_titles": len(tmdb_service.cache),
         "collaborative_model": bool(
             getattr(app.state, "cinema_service", None) and app.state.cinema_service.collab_engine.ready
@@ -231,11 +235,10 @@ async def suggest(
 
 @app.get("/api/v1/songs/fresh")
 async def fresh_songs(limit: int = Query(20, ge=1, le=20)):
-    """🆕 New releases from Spotify (the song dataset ends in 2023)."""
-    live = app.state.live_songs
-    results = await live.fresh(limit)
-    return {"results": results, "spotify_configured": live.enabled,
-            "error": None if results else spotify_service.last_error}
+    """🆕 New songs: Spotify new releases, or Apple's top-songs chart as a free fallback."""
+    results, source = await app.state.live_songs.fresh(limit)
+    return {"results": results, "source": source, "spotify_configured": spotify_service.enabled,
+            "error": spotify_service.last_error if spotify_service.enabled else None}
 
 
 @app.post("/api/v1/songs/covers")
@@ -311,7 +314,7 @@ async def universal_recommend(
         return {"recommendations": recs, "category": content_type}
     recs = engine.recommend(parsed_id, top_n=limit, genre=genre)
     if not recs and content_type == "songs" and engine.get_item(parsed_id) is None:
-        recs = await app.state.live_songs.recommend(parsed_id, top_n=limit)   # newer Spotify track
+        recs = await app.state.live_songs.recommend(parsed_id, top_n=limit)   # newer Spotify / iTunes track
     if not recs:
         raise HTTPException(status_code=404, detail="Item not found.")
     return {"recommendations": await maybe_enrich(content_type, recs), "category": content_type}
@@ -337,7 +340,7 @@ async def get_item(content_type: str, item_id: str):
     live_id = parse_live_id(parsed_id) if content_type == "movies" else None
     item = await app.state.live_movies.get_item(live_id) if live_id is not None else engine.get_item(parsed_id)
     if item is None and content_type == "songs":
-        item = await app.state.live_songs.get_item(parsed_id)   # newer Spotify track
+        item = await app.state.live_songs.get_item(parsed_id)   # newer Spotify / iTunes track
     if not item:
         raise HTTPException(status_code=404, detail="Item not found.")
     enriched = await maybe_enrich(content_type, [item])

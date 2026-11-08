@@ -50,7 +50,8 @@ def live_spotify(client):
 
 
 def test_without_credentials(client):
-    assert client.get("/api/v1/songs/fresh").json() == {"results": [], "spotify_configured": False, "error": None}
+    assert client.get("/api/v1/songs/fresh").json() == {
+        "results": [], "source": None, "spotify_configured": False, "error": None}
     assert client.get(f"/api/v1/item/songs/{NEW_ID}").status_code == 404
     assert client.get("/api/v1/health").json()["spotify_configured"] is False
 
@@ -104,3 +105,64 @@ def test_premium_required_error_is_reported(client, live_spotify):
     assert client.get("/api/v1/health").json()["spotify_error"] == msg
     live_spotify._client = original
     live_spotify.last_error = None
+
+
+# ── iTunes fallback (mocked) ───────────────────────────
+IT_TRACK = {"kind": "song", "trackId": 1831237608, "trackName": "Arz Kiya Hai  Coke Studio Bharat",
+            "artistName": "Anuv Jain", "artistId": 1388609753, "collectionName": "Arz Kiya Hai - Single",
+            "releaseDate": "2025-08-20T12:00:00Z",
+            "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/x/cover.jpg/100x100bb.jpg",
+            "previewUrl": "https://audio-ssl.itunes.apple.com/preview.m4a",
+            "trackViewUrl": "https://music.apple.com/in/album/x?i=1831237608"}
+IT_OTHER = {**IT_TRACK, "trackId": 111, "trackName": "Husn"}
+IT_OLD_DUP = {**IT_TRACK, "trackId": 222, "trackName": "Gul", "releaseDate": "2021-01-01T00:00:00Z"}
+
+
+def itunes_handler(request: httpx.Request) -> httpx.Response:
+    path, params = request.url.path, request.url.params
+    if "most-played" in path:
+        return httpx.Response(200, json={"feed": {"results": [
+            {"id": "1831237608", "name": "Arz Kiya Hai", "artistName": "Anuv Jain"}]}})
+    if path == "/lookup" and params.get("entity") == "song":
+        return httpx.Response(200, json={"results": [{"wrapperType": "artist"}, IT_TRACK, IT_OTHER]})
+    if path == "/lookup":
+        return httpx.Response(200, json={"results": [IT_TRACK]})
+    if path == "/search":
+        return httpx.Response(200, json={"results": [IT_TRACK, IT_OLD_DUP]})
+    return httpx.Response(404)
+
+
+@pytest.fixture
+def live_itunes(client):
+    import main
+    svc = main.itunes_service
+    saved = (svc.enabled, svc._client)
+    svc.enabled = True
+    svc._client = httpx.AsyncClient(transport=httpx.MockTransport(itunes_handler))
+    svc._cache.clear()
+    yield svc
+    svc.enabled, svc._client = saved
+    svc._cache.clear()
+
+
+def test_itunes_fresh_fallback(client, live_itunes):
+    body = client.get("/api/v1/songs/fresh").json()
+    assert body["source"] == "itunes"
+    song = body["results"][0]
+    assert song["movieId"] == "it1831237608" and song["title"] == "Arz Kiya Hai Coke Studio Bharat"
+    assert song["cover"].endswith("/300x300bb.jpg") and song["preview"].startswith("https://")
+    assert song["releaseYear"] == 2025 and song["album"] == "Arz Kiya Hai"
+
+
+def test_itunes_search_dedupes_catalog_songs(client, live_itunes):
+    res = client.get("/api/v1/search/songs?q=anuv jain&limit=10").json()["results"]
+    assert res[0]["movieId"] == "it1831237608", "newer tracks first"
+    assert not any(r["movieId"] == "it222" for r in res), "'Gul' is already in the catalog"
+
+
+def test_itunes_item_and_recommendations(client, live_itunes):
+    assert client.get("/api/v1/item/songs/it1831237608").json()["result"]["artist"] == "Anuv Jain"
+    recs = client.get("/api/v1/recommend/songs/it1831237608?limit=6").json()["recommendations"]
+    assert recs[0]["movieId"] == "it111" and all(r["reasons"] == ["Also by Anuv Jain"] for r in recs)
+    assert all(r["movieId"] != "it1831237608" for r in recs)
+    assert any(r.get("spotifyId") for r in recs), "catalog songs by the same artist are included"
