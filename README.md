@@ -40,6 +40,7 @@ Inkpick is a multi-domain content discovery platform delivering sub-50ms recomme
 - 📒 **My Sketchbook**: tap ♡ to save movies, songs and courses (kept in your browser)
 - 🔗 **Shareable links**: every item has its own URL, e.g. `/#/movies/1`, `/#/songs/<spotifyId>`
 - 🎚️ **Mood mixer**: find songs by energy, danceability and tempo, or pick Chill / Focus / Workout / Party
+- 🆕 **New releases, live from TMDB**: the MovieLens catalog ends in 2023, so Trending / Now Playing / Upcoming, a "New in cinemas" row and search for newer films come straight from TMDB (needs `TMDB_API_KEY`)
 - 🎲 **Surprise me**: a random pick from the current category
 - 🔎 **Live search suggestions** as you type (arrow keys + Enter)
 - 💡 **Because you saved…**: a personal row built from your latest save
@@ -210,7 +211,7 @@ Interactive docs (Swagger UI) at `http://localhost:8000/docs`.
 ## API Reference
 
 All endpoints live under `/api/v1`. `{domain}` is one of `movies`, `songs`, `courses`.
-`limit` is clamped to `1–50`.
+`limit` is clamped to `1–50`. Movies that exist only on TMDB (newer than the catalog) use ids like `t693134`; they work with `/item`, `/recommend` and shareable links.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -222,6 +223,7 @@ All endpoints live under `/api/v1`. `{domain}` is one of `movies`, `songs`, `cou
 | `GET` | `/item/{domain}/{item_id}` | One item by ID (powers shareable links) |
 | `GET` | `/songs/mood?energy=0.8&danceability=0.7&tempo=128` | 🎚️ Songs closest to a target mood (all params optional) |
 | `GET` | `/suggest/{domain}?q=toy` | 🔎 Instant type-ahead titles (prefix matches first) |
+| `GET` | `/movies/fresh?list=trending` | 🆕 Live movies: `trending`, `now_playing`, `upcoming`, `popular` |
 | `GET` | `/movies/{tmdb_id}/trailer` | 🎞️ Best official YouTube trailer (`null` without `TMDB_API_KEY`) |
 | `GET` | `/tmdb/movie/{tmdb_id}` | Cached TMDB metadata proxy (hides the API key) |
 | `POST` | `/tmdb/batch` | `{"ids": [862, 8844]}` → metadata for up to 50 movies |

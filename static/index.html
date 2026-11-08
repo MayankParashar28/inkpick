@@ -22,7 +22,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Kalam:wght@400;700&family=Patrick+Hand&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="/static/css/style.css?v=11">
+    <link rel="stylesheet" href="/static/css/style.css?v=12">
     <link rel="stylesheet" href="/static/css/mascot.css?v=11">
 </head>
 <body>
@@ -117,6 +117,12 @@
             </div>
         </section>
 
+        <!-- Live new releases (TMDB) — the MovieLens catalog stops in 2023 -->
+        <section id="fresh-row" class="because-row fresh-row" aria-labelledby="fresh-title" hidden>
+            <h2 class="grid-header" id="fresh-title">🆕 New in cinemas</h2>
+            <div id="fresh-results" class="discovery-grid similar-grid"></div>
+        </section>
+
         <!-- "Because you saved ..." personal row -->
         <section id="because" class="because-row" aria-labelledby="because-title" hidden>
             <h2 class="grid-header" id="because-title">Because you saved…</h2>
@@ -165,6 +171,6 @@
         </model-viewer>
     </div>
 
-    <script src="/static/js/app.js?v=13" defer></script>
+    <script src="/static/js/app.js?v=14" defer></script>
 </body>
 </html>

@@ -16,7 +16,7 @@ const THEME_KEY = 'inkpick:theme';
 const MASCOT_SRC = '/static/vendor/model-viewer-4.3.1.min.js';
 
 const CATEGORIES = {
-    movies: ['All', 'Action', 'Sci-Fi', 'Horror', 'Romance', 'Comedy', 'Drama', 'Animation', 'Thriller'],
+    movies: ['All', '🔥 Trending', '🆕 Now Playing', '📅 Upcoming', 'Action', 'Sci-Fi', 'Horror', 'Romance', 'Comedy', 'Drama', 'Animation', 'Thriller'],
     songs: ['All', 'Bollywood', 'Pop', 'Rock', 'Electronic', 'Jazz', 'Chill', 'Dance'],
     courses: ['All', 'YouTube', 'Web Dev', 'Design', 'Business', 'Music'],
 };
@@ -28,6 +28,14 @@ const COURSE_FALLBACKS = {
     'music': 'https://images.unsplash.com/photo-1511379938547-c1f69419868d?w=500&q=70',
     'default': 'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=500&q=70',
 };
+
+// Live TMDB lists (the MovieLens catalog stops in mid-2023)
+const FRESH_LISTS = {
+    '🔥 Trending': { list: 'trending', title: '🔥 Trending this week' },
+    '🆕 Now Playing': { list: 'now_playing', title: '🆕 Now playing in cinemas' },
+    '📅 Upcoming': { list: 'upcoming', title: '📅 Coming soon' },
+};
+const NEW_RELEASE_YEAR = 2023;
 
 const MOOD_PRESETS = {
     chill: { energy: 0.3, dance: 0.5, tempo: 85 },
@@ -321,6 +329,7 @@ async function fetchDiscovery(append = false) {
             renderSpotlight(items[0]);
             renderItems(items.slice(1));
             renderBecause();
+            if (tab === 'movies') renderFreshRow();
         } else {
             renderItems(items, true);
         }
@@ -463,6 +472,7 @@ function renderPills() {
             currentGenre = cat;
             genrePills.querySelectorAll('.pill').forEach(btn => btn.classList.toggle('active', btn === p));
             if (cat === 'All') fetchDiscovery();
+            else if (currentTab === 'movies' && FRESH_LISTS[cat]) showFreshList(cat);
             else handleSearch(cat);
         };
         genrePills.appendChild(p);
@@ -549,7 +559,8 @@ function buildCard(item, i) {
         : poster ? `<img src="${poster}" class="loaded" alt="" loading="lazy" decoding="async">`
         : `<div class="skeleton-sketch">${generateMovieSketch(item)}</div>`;
 
-    const labelText = isCourse ? (item.album || 'Course') : isMusic ? 'Track' : 'Film';
+    const isNew = domain === 'movies' && (item.releaseYear || 0) >= NEW_RELEASE_YEAR;
+    const labelText = isCourse ? (item.album || 'Course') : isMusic ? 'Track' : isNew ? 'New' : 'Film';
     const labelClass = String(labelText).toLowerCase().replace(/[^a-z0-9]+/g, '-');
     const score = item.similarity > 0 ? `<span class="match-score">${Math.round(item.similarity * 100)}% match</span>` : '';
     const voteAvg = meta && meta.vote_average ? `<span class="rating">⭐ ${Number(meta.vote_average).toFixed(1)}</span>` : '';
@@ -675,13 +686,19 @@ async function selectItem(item, { push = true } = {}) {
         metaEl.innerHTML = `<span>Rating: ${escapeHtml(item.rating)} ★</span> <span class="acoustic-badge">${escapeHtml(item.category)}</span>`;
     } else {
         let meta = metaCache[item.tmdbId] || item.cached;
-        if (!meta && item.tmdbId > 0) {
-            imgContainer.innerHTML = generateMovieSketch(item);
-            desc.textContent = 'Inkpick is sketching the details...';
+        // List results lack runtime/tagline: fetch full details when missing
+        if (item.tmdbId > 0 && (!meta || meta.runtime === undefined)) {
+            if (!meta) {
+                imgContainer.innerHTML = generateMovieSketch(item);
+                desc.textContent = 'Inkpick is sketching the details...';
+            }
             try {
-                meta = await getJSON(`/api/v1/tmdb/movie/${item.tmdbId}`);
-                metaCache[item.tmdbId] = meta;
-                pruneCache();
+                const full = await getJSON(`/api/v1/tmdb/movie/${item.tmdbId}`);
+                if (full && full.title !== 'Unknown') {
+                    meta = { ...(meta || {}), ...full };
+                    metaCache[item.tmdbId] = meta;
+                    pruneCache();
+                }
             } catch (err) {
                 console.error('Detail fetch error:', err);
             }
@@ -914,8 +931,63 @@ function chooseSuggestion(item) {
 // ── "Because you saved …" ────────────────────────────
 function hideBecause() {
     becauseSeq++;
+    freshSeq++;
     const row = document.getElementById('because');
     if (row) row.hidden = true;
+    const fresh = document.getElementById('fresh-row');
+    if (fresh) fresh.hidden = true;
+}
+
+// ── New releases (live from TMDB) ────────────────────
+let freshSeq = 0;
+const freshCache = new Map();   // list -> { items, configured }
+
+async function getFresh(list) {
+    if (freshCache.has(list)) return freshCache.get(list);
+    const data = await getJSON(`/api/v1/movies/fresh?list=${list}`);
+    const value = { items: data.results || [], configured: !!data.tmdb_configured };
+    freshCache.set(list, value);
+    return value;
+}
+
+async function renderFreshRow() {
+    const row = document.getElementById('fresh-row');
+    const target = document.getElementById('fresh-results');
+    if (!row || !target) return;
+    const seq = ++freshSeq;
+    try {
+        const { items } = await getFresh('now_playing');
+        if (seq !== freshSeq || currentTab !== 'movies') return;
+        if (!items.length) { row.hidden = true; return; }
+        renderItems(items.slice(0, 8), false, target);
+        row.hidden = false;
+    } catch {
+        if (seq === freshSeq) row.hidden = true;
+    }
+}
+
+async function showFreshList(label) {
+    const { list, title } = FRESH_LISTS[label];
+    const seq = ++searchSeq;
+    hideBecause();
+    loadMoreWrap.hidden = true;
+    gridHeader.textContent = title;
+    showSkeletons(8);
+    try {
+        const { items, configured } = await getFresh(list);
+        if (seq !== searchSeq || currentTab !== 'movies') return;
+        if (!items.length) {
+            grid.innerHTML = configured
+                ? emptyState('🎬 Nothing here right now.', 'Check back soon for fresh releases.')
+                : emptyState('🎬 New releases need a TMDB key.', 'Add <code>TMDB_API_KEY</code> to the server environment to see live movies.');
+            return;
+        }
+        renderItems(items);
+        talk('Hot off the press! 🍿', 'ThumbsUp');
+    } catch (err) {
+        console.error('Fresh list error:', err);
+        if (seq === searchSeq) grid.innerHTML = emptyState('⚠️ Couldn\'t reach the cinema.', 'Try again in a moment.');
+    }
 }
 
 async function renderBecause() {

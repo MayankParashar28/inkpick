@@ -1398,3 +1398,13 @@ a.logo {
         right: 14px;
     }
 }
+
+/* ── New releases ── */
+.fresh-row {
+    border-color: var(--accent);
+}
+
+.label-new {
+    background: var(--accent) !important;
+    color: #fff !important;
+}
