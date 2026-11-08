@@ -1,70 +1,51 @@
 """
 Hybrid Recommendation Engine
 =============================
-Blends content-based and collaborative results.
-Falls back to content-only when collaborative is unavailable.
+Weighted blend of content-based and collaborative scores:
+
+    score(i) = α · content(i) + (1 − α) · collab(i)
+
+α defaults to 0.65 (content-biased). Movies the collaborative model has never
+seen (cold start) fall back to content-only results.
 """
+import os
+
+DEFAULT_ALPHA = float(os.getenv("INKPICK_HYBRID_ALPHA", "0.65"))
 
 
 class HybridEngine:
     """Blends content + collaborative recommendations."""
 
-    def __init__(self, movie_engine, collab_engine):
+    def __init__(self, movie_engine, collab_engine, alpha: float = DEFAULT_ALPHA):
         self.content = movie_engine
         self.collab = collab_engine
-        print("  🔀 Hybrid Engine ready")
+        self.alpha = min(1.0, max(0.0, alpha))
+        print(f"  🔀 Hybrid Engine ready (α={self.alpha:.2f})")
 
-    def recommend(self, movie_id: int, top_n: int = 12, genre: str = None) -> list[dict]:
-        """
-        Generate hybrid recommendations.
-        Falls back to content-only when collaborative returns nothing.
-        Optionally filters by genre.
-        """
-        # Get content-based results
-        content_recs = self.content.recommend(movie_id, top_n=top_n * 2)
+    def recommend(self, movie_id: int, top_n: int = 12, genre: str | None = None) -> list[dict]:
+        pool = top_n * 3
+        content_recs = self.content.recommend(movie_id, top_n=pool, genre=genre)
 
-        # Get collaborative results
-        collab_recs = self.collab.recommend(movie_id, top_n=top_n * 2)
+        # Popularity fallback is not personalised — only blend a trained model
+        if not (self.collab.ready and self.collab.covers(movie_id)):
+            for r in content_recs:
+                r["mode"] = "hybrid"
+            return content_recs[:top_n]
 
-        if collab_recs:
-            # Blend: interleave collab and content, deduplicating by movieId
-            seen = set()
-            blended = []
-            # Alternate: collab, content, collab, content...
-            max_len = max(len(collab_recs), len(content_recs))
-            for i in range(max_len):
-                if i < len(collab_recs):
-                    mid = collab_recs[i]["movieId"]
-                    if mid not in seen:
-                        seen.add(mid)
-                        blended.append(collab_recs[i])
-                if i < len(content_recs):
-                    mid = content_recs[i]["movieId"]
-                    if mid not in seen:
-                        seen.add(mid)
-                        blended.append(content_recs[i])
-        else:
-            # Fallback: content-only
-            blended = content_recs
+        collab_recs = self.collab.recommend(movie_id, top_n=pool, genre=genre)
+        merged: dict[int, dict] = {}
+        for r in content_recs:
+            merged[r["movieId"]] = {**r, "_c": r.get("similarity") or 0.0, "_f": 0.0}
+        for r in collab_recs:
+            entry = merged.setdefault(r["movieId"], {**r, "_c": 0.0, "_f": 0.0, "reasons": []})
+            entry["_f"] = r.get("similarity") or 0.0
+            entry["reasons"] = (entry.get("reasons") or []) + r.get("reasons", [])
 
-        # Genre filter (if requested)
-        if genre:
-            genre_lower = genre.lower()
-            blended = [
-                r for r in blended
-                if any(g.lower() == genre_lower for g in r.get("genres", []))
-            ]
-
-        # Tag each result with hybrid mode
-        for r in blended:
+        blended = []
+        for r in merged.values():
+            r["similarity"] = round(self.alpha * r.pop("_c") + (1 - self.alpha) * r.pop("_f"), 4)
             r["mode"] = "hybrid"
-
+            r["reasons"] = list(dict.fromkeys(r.get("reasons") or []))[:3]
+            blended.append(r)
+        blended.sort(key=lambda r: r["similarity"], reverse=True)
         return blended[:top_n]
-
-    def search(self, query: str, limit: int = 10) -> list[dict]:
-        """Delegate search to content engine."""
-        return self.content.search(query, limit)
-
-    def discover(self, limit: int = 24, offset: int = 0) -> list[dict]:
-        """Delegate discovery to content engine with pagination."""
-        return self.content.discover(limit, offset)

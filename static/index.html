@@ -5,91 +5,122 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Inkpick: The Cinema Sketchbook 🎬</title>
     <meta name="description" content="Inkpick is a hand-drawn discovery hub for movies, songs, and courses. Find your next masterpiece.">
+    <meta name="theme-color" content="#fdfbf7">
+    <meta name="color-scheme" content="light dark">
+    <script>
+        // Apply the saved theme before first paint (no light/dark flash)
+        try {
+            var t = localStorage.getItem('inkpick:theme');
+            if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t;
+        } catch (e) {}
+    </script>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎬</text></svg>">
-    
-    <!-- External Fonts & Icons -->
+
+    <!-- Connections we need early (posters + fonts) -->
+    <link rel="preconnect" href="https://image.tmdb.org" crossorigin>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Kalam:wght@400;700&family=Patrick+Hand&display=swap" rel="stylesheet">
-    <!-- O9: Pinned Lucide version -->
-    <script src="https://unpkg.com/lucide@0.263.1"></script>
-    <!-- O8: model-viewer script for 3D mascot -->
-    <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
-    
-    <!-- Hand-Drawn Styles -->
-    <link rel="stylesheet" href="/static/css/style.css?v=8">
-    <link rel="stylesheet" href="/static/css/mascot.css?v=8">
+
+    <link rel="stylesheet" href="/static/css/style.css?v=11">
+    <link rel="stylesheet" href="/static/css/mascot.css?v=11">
 </head>
 <body>
 
     <nav aria-label="Main Navigation">
-        <div class="logo" role="button" onclick="location.reload()" aria-label="Inkpick Logo">Inkpick: Hub</div>
-        
-        <!-- 'Sketchy' The Mascot -->
-        <div id="sketchy-mascot" class="mascot-container">
-            <div class="sketchy-bubble-wrap">
-                <div class="sketchy-bubble" id="sketchy-text">Searching for a masterpiece? 🖋️</div>
-            </div>
-            
-            <model-viewer id="sketchy-3d" 
-                src="https://modelviewer.dev/shared-assets/models/RobotExpressive.glb"
-                alt="Expressive 3D Mascot"
-                auto-rotate 
-                rotation-per-second="30deg"
-                interaction-prompt="none"
-                shadow-intensity="1" 
-                camera-controls 
-                touch-action="pan-y"
-                autoplay
-                animation-name="Dance">
-            </model-viewer>
-        </div>
+        <a class="logo" href="#/movies" aria-label="Inkpick home">Inkpick: Hub</a>
 
         <div class="nav-search">
-            <div class="search-box">
-                <i data-lucide="search" aria-hidden="true" style="width: 20px;"></i>
-                <input type="text" id="query-input" placeholder="Sketch a movie title..." autocomplete="off">
-            </div>
+            <label class="search-box" for="query-input">
+                <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                <span class="sr-only">Search</span>
+                <input type="search" id="query-input" placeholder="Sketch a movie title..." autocomplete="off" enterkeyhint="search"
+                    role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="suggest-list">
+            </label>
+            <ul id="suggest-list" class="suggest-list" role="listbox" aria-label="Suggestions" hidden></ul>
         </div>
-        <!-- B3: Paper clip element added -->
+
         <div class="nav-links">
-            <div id="nav-paper-clip" class="paper-clip"></div>
             <a href="#/movies" class="nav-link" data-route="movies">Cinema Log</a>
             <a href="#/songs" class="nav-link" data-route="songs">Playlist Scribbles</a>
             <a href="#/courses" class="nav-link" data-route="courses">Learning Scribbles</a>
+            <a href="#/saved" class="nav-link" data-route="saved">My Sketchbook <span id="saved-count" class="saved-count" hidden>0</span></a>
         </div>
+        <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Switch to dark mode" title="Switch theme">🌙</button>
     </nav>
 
     <main id="main-content">
-        <!-- Spotlight -->
-        <section id="spotlight-section" class="spotlight-section">
-            <div id="spotlight-container"></div>
-        </section>
-
-        <!-- Genre Pills -->
-        <section class="pill-bar-container">
-            <div id="genre-pills" class="genre-pills"></div>
-        </section>
-
-        <!-- Detail View -->
-        <section id="detail-view" class="detail-view" aria-labelledby="det-title">
+        <!-- Detail View (deep-linkable: #/movies/1) -->
+        <section id="detail-view" class="detail-view" aria-labelledby="det-title" hidden>
+            <button id="det-close" class="det-close" type="button" aria-label="Close details">✕</button>
             <div class="detail-flex">
-                <div class="detail-img" id="det-img-container">
-                    <img src="" alt="Poster">
-                </div>
+                <div class="detail-img" id="det-img-container"></div>
                 <article class="detail-content">
                     <p class="detail-tagline" id="det-tagline"></p>
                     <h1 class="detail-title" id="det-title"></h1>
                     <div class="detail-meta" id="det-meta"></div>
                     <p class="detail-desc" id="det-desc"></p>
+                    <ul class="detail-why" id="det-why" hidden></ul>
                     <div class="detail-actions">
-                        <a id="det-play-link" target="_blank" class="play-btn">
-                            <i data-lucide="play-circle"></i>
-                            <span id="det-play-text">Sketching Link...</span>
+                        <button id="det-trailer" class="ghost-btn trailer-btn" type="button" hidden>🎞️ Watch trailer</button>
+                        <a id="det-play-link" target="_blank" rel="noopener noreferrer" class="play-btn">
+                            <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m10 8 6 4-6 4z"/></svg>
+                            <span id="det-play-text">Open</span>
                         </a>
+                        <button id="det-save" class="ghost-btn" type="button" aria-pressed="false">♡ Save</button>
+                        <button id="det-share" class="ghost-btn" type="button">🔗 Copy link</button>
                     </div>
                 </article>
             </div>
+            <div id="trailer-wrap" class="trailer-wrap" hidden></div>
+            <div id="similar-wrap" class="similar-wrap" hidden>
+                <h2 class="grid-header">More like this</h2>
+                <div id="similar-results" class="discovery-grid similar-grid" aria-live="polite"></div>
+            </div>
+        </section>
+
+        <!-- Spotlight -->
+        <section id="spotlight-section" class="spotlight-section">
+            <div id="spotlight-container"></div>
+        </section>
+
+        <!-- Genre Pills + Surprise -->
+        <section class="pill-bar-container" id="pill-bar">
+            <div id="genre-pills" class="genre-pills"></div>
+            <button id="btn-surprise" class="btn-surprise" type="button" title="Show a random pick">🎲 Surprise me</button>
+        </section>
+
+        <!-- Mood Mixer (songs only) -->
+        <section id="mood-mixer" class="mood-mixer" aria-labelledby="mood-title" hidden>
+            <div class="mood-head">
+                <h2 id="mood-title" class="mood-title">🎚️ Mood mixer</h2>
+                <div class="mood-presets" role="group" aria-label="Mood presets">
+                    <button type="button" class="pill" data-preset="chill">😌 Chill</button>
+                    <button type="button" class="pill" data-preset="focus">🧠 Focus</button>
+                    <button type="button" class="pill" data-preset="workout">🏋️ Workout</button>
+                    <button type="button" class="pill" data-preset="party">🪩 Party</button>
+                </div>
+            </div>
+            <div class="mood-sliders">
+                <label class="mood-slider">
+                    <span>Energy <output id="mood-energy-out">0.60</output></span>
+                    <input type="range" id="mood-energy" min="0" max="1" step="0.05" value="0.6">
+                </label>
+                <label class="mood-slider">
+                    <span>Danceability <output id="mood-dance-out">0.60</output></span>
+                    <input type="range" id="mood-dance" min="0" max="1" step="0.05" value="0.6">
+                </label>
+                <label class="mood-slider">
+                    <span>Tempo <output id="mood-tempo-out">110</output> BPM</span>
+                    <input type="range" id="mood-tempo" min="60" max="200" step="5" value="110">
+                </label>
+            </div>
+        </section>
+
+        <!-- "Because you saved ..." personal row -->
+        <section id="because" class="because-row" aria-labelledby="because-title" hidden>
+            <h2 class="grid-header" id="because-title">Because you saved…</h2>
+            <div id="because-results" class="discovery-grid similar-grid"></div>
         </section>
 
         <div id="content-sections">
@@ -97,16 +128,43 @@
                 <h2 class="grid-header" id="grid-header">Trending Sketches</h2>
                 <section id="grid-container" aria-live="polite">
                     <div class="discovery-grid" id="discovery-results"></div>
-                    <div id="load-more-wrap" class="load-more-container" style="display:none;">
-                        <button id="btn-load-more" class="btn-load-more">Show more sketches</button>
+                    <div id="load-more-wrap" class="load-more-container" hidden>
+                        <button id="btn-load-more" class="btn-load-more" type="button">Show more sketches</button>
                     </div>
                 </section>
-                <div class="sr-only" aria-live="polite">Press '/' to focus the search bar.</div>
+                <p class="sr-only">Press '/' to focus the search bar.</p>
             </div>
         </div>
     </main>
 
-    <!-- Application Logic -->
-    <script src="/static/js/app.js?v=hub_fix_10"></script>
+    <!-- 'Sketchy' the 3D mascot — a desktop pet that lives in the page margin;
+         the 3D viewer script is lazy-loaded after first paint -->
+    <div id="sketchy-mascot" class="mascot-container at-left" title="Hi, I'm Sketchy!">
+        <div class="sketchy-bubble-wrap">
+            <div class="sketchy-bubble" id="sketchy-text">Searching for a masterpiece? 🖋️</div>
+        </div>
+        <div class="mascot-shadow" aria-hidden="true"></div>
+        <model-viewer id="sketchy-3d"
+            alt="Sketchy, the Inkpick robot mascot"
+            data-src="/static/assets/robot.glb"
+            environment-image="neutral"
+            tone-mapping="aces"
+            exposure="1.1"
+            shadow-intensity="1.1"
+            shadow-softness="0.9"
+            camera-orbit="0deg 78deg auto"
+            field-of-view="28deg"
+            interpolation-decay="140"
+            interaction-prompt="none"
+            disable-zoom
+            disable-pan
+            disable-tap
+            autoplay
+            animation-name="Idle"
+            animation-crossfade-duration="350">
+        </model-viewer>
+    </div>
+
+    <script src="/static/js/app.js?v=13" defer></script>
 </body>
 </html>

@@ -1,0 +1,3 @@
+-r requirements.txt
+-r scripts/requirements-train.txt
+pytest>=8.0

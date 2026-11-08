@@ -1,146 +1,154 @@
-/* ── Suggesto Mascot: Consolidated & B4 Fixed ── */
+/* ── Sketchy: 3D robot mascot ──────────────────────────────────────
+   A little desktop pet that stands in the page's side margin at the
+   bottom of the screen and strolls between the left and right gutters.
+   Only `left` animates, so JS can detect arrival cleanly. */
 .mascot-container {
-    position: absolute;
-    bottom: -15px;
-    left: 40px;
-    width: 60px;
-    height: 60px;
+    position: fixed;
+    bottom: 0;
+    left: 6px;
+    width: 76px;
+    height: 92px;
     z-index: 1000;
-    transition: all 2.5s cubic-bezier(0.4, 0, 0.2, 1);
     user-select: none;
-    will-change: transform;
+    cursor: pointer;
+    transition: left 4s cubic-bezier(0.45, 0, 0.55, 1);
 }
 
+.mascot-container.at-left  { left: 6px; }
+.mascot-container.at-right { left: calc(100% - 82px); }
 
-
-/* Ink-Wash Filter */
 #sketchy-3d {
     width: 100%;
     height: 100%;
+    background: transparent;
     --poster-color: transparent;
-    cursor: pointer;
-    filter: none;
+    --progress-bar-color: transparent;
+    opacity: 0;
+    transition: opacity 0.6s ease;
 }
 
-/* Speech Bubble Container (Viewport Safety) */
+.mascot-container.ready #sketchy-3d {
+    opacity: 1;
+}
+
+/* Soft contact shadow on the paper so the robot feels grounded */
+.mascot-shadow {
+    position: absolute;
+    left: 50%;
+    bottom: 6px;
+    width: 52px;
+    height: 10px;
+    transform: translateX(-50%);
+    background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.28), rgba(0, 0, 0, 0) 70%);
+    opacity: 0;
+    transition: opacity 0.6s ease;
+    pointer-events: none;
+}
+
+.mascot-container.ready .mascot-shadow {
+    opacity: 1;
+}
+
+/* Speech bubble */
 .sketchy-bubble-wrap {
     position: absolute;
-    bottom: 110%;
-    right: 0;
-    width: auto;
+    bottom: 100%;
+    left: 50%;
+    width: max-content;
+    max-width: 240px;
+    transform: translateX(-50%);
     pointer-events: none;
     z-index: 1001;
 }
 
+.mascot-container.at-left .sketchy-bubble-wrap {
+    left: 0;
+    transform: none;
+}
+
+.mascot-container.at-right .sketchy-bubble-wrap {
+    left: auto;
+    right: 0;
+    transform: none;
+}
+
 .sketchy-bubble {
-    width: 200px;
-    padding: 12px;
+    position: relative;
+    max-width: 240px;
+    padding: 10px 14px;
     background: var(--post-it-yellow);
     border: 3px solid var(--foreground);
     border-radius: 255px 15px 225px 15px / 15px 225px 15px 255px;
     font-family: var(--font-header);
     font-size: 0.95rem;
     font-weight: 700;
-    line-height: 1.2;
-    transform: scale(0) rotate(15deg);
-    transform-origin: bottom right;
-    transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.3s ease;
-    box-shadow: 6px 6px 0px rgba(0,0,0,0.1);
+    line-height: 1.25;
+    box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.12);
+    transform: translateY(8px) scale(0.85);
+    transform-origin: bottom center;
     opacity: 0;
+    transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.2s ease;
     pointer-events: auto;
 }
 
 .sketchy-bubble::after {
     content: '';
     position: absolute;
-    bottom: -15px;
-    right: 20px;
-    width: 20px;
-    height: 20px;
+    bottom: -11px;
+    left: calc(50% - 8px);
+    width: 16px;
+    height: 16px;
     background: var(--post-it-yellow);
     border-right: 3px solid var(--foreground);
     border-bottom: 3px solid var(--foreground);
     transform: rotate(45deg);
 }
 
+.mascot-container.at-left .sketchy-bubble::after  { left: 30px; }
+.mascot-container.at-right .sketchy-bubble::after { left: auto; right: 30px; }
+
 .mascot-container:hover .sketchy-bubble,
 .mascot-container.active .sketchy-bubble {
-    transform: scale(1) rotate(-1deg);
+    transform: translateY(0) scale(1) rotate(-1deg);
     opacity: 1;
 }
 
-/* Animations */
-@keyframes floating {
-
-    0%,
-    100% {
-        transform: translateY(0);
-    }
-
-    50% {
-        transform: translateY(-15px);
-    }
-}
-
-@keyframes wobbly {
-
-    0%,
-    100% {
-        transform: rotate(-2deg) scale(1);
-    }
-
-    50% {
-        transform: rotate(2deg) scale(1.05);
-    }
-}
-
-/* ── B4 FIX: Single definition per movement state ── */
-.mascot-container.at-logo {
-    left: 20px;
-    bottom: -15px;
-    top: auto;
-}
-
-/* Ensure bubble stays on screen when mascot is at logo */
-.mascot-container.at-logo .sketchy-bubble-wrap {
-    left: 0;
-    right: auto;
-}
-
-.mascot-container.at-logo .sketchy-bubble {
-    transform-origin: bottom left;
-}
-
-.mascot-container.at-logo .sketchy-bubble::after {
-    left: 20px;
-    right: auto;
-}
-
-.mascot-container.at-logo.active .sketchy-bubble {
-    transform: scale(1) rotate(2deg);
-}
-
-.mascot-container.at-hero {
-    left: 50%;
-    transform: translateX(-50%);
-    bottom: -15px;
-    top: auto;
-}
-
-.mascot-container.facing-left #sketchy-3d {
-    transform: scaleX(-1);
-}
-
+/* Phones/tablets: park the robot in the corner, no roaming */
 @media (max-width: 768px) {
-    .mascot-container {
-        width: 80px;
-        height: 80px;
-        bottom: 20px;
-        right: 20px;
+    .mascot-container,
+    .mascot-container.at-left,
+    .mascot-container.at-right {
+        left: auto;
+        right: 8px;
+        bottom: 0;
+        width: 64px;
+        height: 76px;
+        transition: none;
+    }
+
+    .mascot-container .sketchy-bubble-wrap,
+    .mascot-container.at-left .sketchy-bubble-wrap,
+    .mascot-container.at-right .sketchy-bubble-wrap {
+        left: auto;
+        right: 0;
+        transform: none;
+        max-width: 180px;
     }
 
     .sketchy-bubble {
-        width: 140px;
         font-size: 0.8rem;
+    }
+
+    .mascot-container .sketchy-bubble::after {
+        left: auto;
+        right: 26px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .mascot-container,
+    #sketchy-3d,
+    .sketchy-bubble {
+        transition: none;
     }
 }

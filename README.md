@@ -35,6 +35,18 @@ Inkpick is a multi-domain content discovery platform delivering sub-50ms recomme
 | Audio | Custom Metadata | — |
 | Education | Udemy Catalog | — |
 
+**Highlights**
+- ✨ **More like this** on every item, with a plain-English *“Why this pick?”* (shared genres, same era/franchise, same artist, similar tempo/energy, shared course topics)
+- 📒 **My Sketchbook**: tap ♡ to save movies, songs and courses (kept in your browser)
+- 🔗 **Shareable links**: every item has its own URL, e.g. `/#/movies/1`, `/#/songs/<spotifyId>`
+- 🎚️ **Mood mixer**: find songs by energy, danceability and tempo, or pick Chill / Focus / Workout / Party
+- 🎲 **Surprise me**: a random pick from the current category
+- 🔎 **Live search suggestions** as you type (arrow keys + Enter)
+- 💡 **Because you saved…**: a personal row built from your latest save
+- 🎞️ **Trailers** play inline in the movie view (with `TMDB_API_KEY`)
+- 🖍️ **Chalkboard dark mode**: follows your system, or toggle it
+- 🤖 **Sketchy**: a lit, animated 3D robot mascot, lazy-loaded so it never slows the page
+
 ---
 
 ## Architecture
@@ -106,17 +118,26 @@ similarity(q, i) = (q · i) / (‖q‖ · ‖i‖)
 
 ### 2. Collaborative Filtering
 
-A **latent factor model** decomposes the user–item interaction matrix into lower-dimensional embeddings. The current implementation operates as a production-ready stub, designed for drop-in replacement with trained matrix factorization or neural CF models.
+A **latent factor model** ("people who liked X also liked Y"): user-mean-centred MovieLens ratings are factorised with truncated SVD, and movies are compared by the cosine similarity of their factors.
+
+Train it once from any MovieLens `ratings.csv` ([ml-latest-small](https://files.grouplens.org/datasets/movielens/ml-latest-small.zip) for a quick start, ml-32m for the full model):
+
+```bash
+pip install -r scripts/requirements-train.txt
+python scripts/train_collab.py --ratings path/to/ratings.csv
+```
+
+This writes `models/collab_factors.npy` and `models/collab_movie_ids.npy` (plain NumPy, no pickle). The app picks them up on its next start; `GET /api/v1/health` shows `"collaborative_model": true`. Until then a popularity fallback is used and hybrid mode is content-only.
 
 ### 3. Hybrid Interleaving
 
-A weighted blending layer merges ranked outputs from the content-based and collaborative engines. The interleaving weight is adjusted dynamically based on user history availability, ensuring high-relevance results in both cold-start and warm-user scenarios.
+A weighted blend merges the content-based and collaborative scores. Movies the collaborative model has never seen (cold start) automatically fall back to content-only results.
 
 ```
 score_hybrid(i) = α · score_cb(i) + (1 - α) · score_cf(i)
 ```
 
-Where `α ∈ [0, 1]` is a configurable blend parameter (default: 0.65 content-biased for cold-start users).
+Where `α ∈ [0, 1]` is set by `INKPICK_HYBRID_ALPHA` (default `0.65`, content-biased).
 
 ### 4. Fuzzy Search Fallback
 
@@ -188,44 +209,41 @@ Interactive docs (Swagger UI) at `http://localhost:8000/docs`.
 
 ## API Reference
 
-### `GET /recommend/{domain}`
+All endpoints live under `/api/v1`. `{domain}` is one of `movies`, `songs`, `courses`.
+`limit` is clamped to `1–50`.
 
-Returns ranked recommendations for a given item within a domain.
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `domain` | `path`  | One of `cinema`, `audio`, `education` |
-| `item_id` | `query`  | Catalog item identifier |
-| `top_k` | `query`  | Number of results (default: `10`) |
-| `mode` | `query`  | `content`, `collaborative`, or `hybrid` (default: `hybrid`) |
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/discover/{domain}?limit=24&offset=0` | Paginated home-page feed |
+| `GET` | `/search/{domain}?q=...&limit=24` | Title/artist/instructor search (genre names work for movies) with fuzzy "did you mean" fallback |
+| `GET` | `/recommend/{domain}/{item_id}?limit=12&genre=...` | Similar items for one catalog item |
+| `GET` | `/movies/recommend/{movie_id}?mode=hybrid&genre=...` | Movie recs with `content`, `collaborative` or `hybrid` mode |
+| `GET` | `/surprise/{domain}` | 🎲 One random pick |
+| `GET` | `/item/{domain}/{item_id}` | One item by ID (powers shareable links) |
+| `GET` | `/songs/mood?energy=0.8&danceability=0.7&tempo=128` | 🎚️ Songs closest to a target mood (all params optional) |
+| `GET` | `/suggest/{domain}?q=toy` | 🔎 Instant type-ahead titles (prefix matches first) |
+| `GET` | `/movies/{tmdb_id}/trailer` | 🎞️ Best official YouTube trailer (`null` without `TMDB_API_KEY`) |
+| `GET` | `/tmdb/movie/{tmdb_id}` | Cached TMDB metadata proxy (hides the API key) |
+| `POST` | `/tmdb/batch` | `{"ids": [862, 8844]}` → metadata for up to 50 movies |
+| `GET` | `/health` | Status, active categories, TMDB cache size |
 
 **Example**
 ```bash
-curl "http://localhost:8000/recommend/cinema?item_id=tt0111161&top_k=5&mode=hybrid"
+curl "http://localhost:8000/api/v1/recommend/movies/1?limit=3"
 ```
 
-**Response**
 ```json
 {
-  "domain": "cinema",
-  "query_item": "tt0111161",
-  "mode": "hybrid",
-  "results": [
-    { "item_id": "tt0068646", "title": "The Godfather", "score": 0.94 },
-    ...
-  ],
-  "latency_ms": 38
+  "category": "movies",
+  "recommendations": [
+    {
+      "movieId": 3114, "title": "Toy Story 2 (1999)", "tmdbId": 863, "similarity": 0.98,
+      "genres": ["Adventure", "Animation", "Children", "Comedy", "Fantasy"],
+      "reasons": ["Both Adventure + Animation + Children", "Same franchise", "Same era (1990s)"]
+    }
+  ]
 }
 ```
-
-### `GET /search/{domain}`
-
-Fuzzy-search the catalog with Levenshtein fallback.
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `domain` | `path`  | Target domain |
-| `q` | `query`  | Search query string |
 
 ---
 
@@ -246,9 +264,14 @@ Simply connect the repository to your platform of choice — no additional confi
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `TMDB_API_KEY` | — | **Recommended.** Posters, overviews and trailers for all ~87k movies. Without it only the ~3,100 cached titles have posters and trailers fall back to a YouTube search. Free key: [themoviedb.org/settings/api](https://www.themoviedb.org/settings/api) |
+| `INKPICK_HYBRID_ALPHA` | `0.65` | Content weight in hybrid blending (1 = content only) |
+| `INTERNAL_SECRET_TOKEN` | — | Protects `POST /api/v1/metadata/cache` |
 | `PORT` | `8000` | Server bind port (auto-set by most platforms) |
-| `CB_BLEND_ALPHA` | `0.65` | Content-based weight in hybrid interleaving |
-| `MAX_FUZZY_CANDIDATES` | `5` | Max Levenshtein correction candidates |
+
+Copy `.env.example` to `.env` for local development.
+
+**On Vercel:** Project → Settings → Environment Variables → add `TMDB_API_KEY` (Production and Preview) → redeploy. Check it worked with `GET /api/v1/health` → `"tmdb_configured": true`.
 
 ---
 
@@ -265,7 +288,7 @@ Simply connect the repository to your platform of choice — no additional confi
 
 ## Roadmap
 
-- [ ] Trained matrix factorization model (ALS / BPR) replacing CF stub
+- [x] Trained matrix factorization model (truncated SVD) replacing CF stub
 - [ ] Redis-backed inference cache for repeat queries
 - [ ] Streaming SSE endpoint for real-time recommendation updates
 - [ ] User session tracking for implicit feedback loop
@@ -280,6 +303,10 @@ Pull requests are welcome. For significant changes, please open an issue first t
 ```bash
 # Run with auto-reload for development
 uvicorn main:app --reload --log-level debug
+
+# Run the test suite (also runs in GitHub Actions on every push / PR)
+pip install -r requirements-dev.txt
+python -m pytest -q
 ```
 
 ---

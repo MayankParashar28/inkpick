@@ -32,3 +32,6 @@ Dockerfile
 docker-compose.yml
 tracks_features.csv
 music.csv
+
+# Test cache
+.pytest_cache/

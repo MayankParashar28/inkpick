@@ -3,6 +3,8 @@ Inkpick Registry
 =================
 Architecture to support multi-content discovery (Movies, Music, Courses).
 """
+from typing import Any, Dict
+
 
 class InkpickRegistry:
     def __init__(self):
