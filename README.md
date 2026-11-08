@@ -39,6 +39,7 @@ Inkpick is a multi-domain content discovery platform delivering sub-50ms recomme
 - ✨ **More like this** on every item, with a plain-English *“Why this pick?”* (shared genres, same era/franchise, same artist, similar tempo/energy, shared course topics)
 - 📒 **My Sketchbook**: tap ♡ to save movies, songs and courses (kept in your browser)
 - 🔗 **Shareable links**: every item has its own URL, e.g. `/#/movies/1`, `/#/songs/<spotifyId>`
+- 🎧 **New songs every week** from Spotify, or free from Apple's charts (no key), with ▶ 30-second previews
 - 🎨 **Real album covers** for songs via Spotify's public oEmbed (no API key; the first ~1,200 ship pre-cached in `models/song_covers.json`)
 - 🎚️ **Mood mixer**: find songs by energy, danceability and tempo, or pick Chill / Focus / Workout / Party
 - 🆕 **New releases, live from TMDB**: the MovieLens catalog ends in 2023, so Trending / Now Playing / Upcoming, a "New in cinemas" row and search for newer films come straight from TMDB (needs `TMDB_API_KEY`)
@@ -225,7 +226,7 @@ All endpoints live under `/api/v1`. `{domain}` is one of `movies`, `songs`, `cou
 | `GET` | `/songs/mood?energy=0.8&danceability=0.7&tempo=128` | 🎚️ Songs closest to a target mood (all params optional) |
 | `GET` | `/suggest/{domain}?q=toy` | 🔎 Instant type-ahead titles (prefix matches first) |
 | `POST` | `/songs/covers` | `{"ids": ["<spotifyId>", …]}` → album cover URLs for up to 50 tracks |
-| `GET` | `/songs/fresh` | 🆕 New releases from Spotify (needs Spotify keys) |
+| `GET` | `/songs/fresh` | 🆕 New songs: Spotify new releases, or Apple's top-songs chart (no key) — `source` says which |
 | `GET` | `/movies/fresh?list=trending` | 🆕 Live movies: `trending`, `now_playing`, `upcoming`, `popular` |
 | `GET` | `/movies/{tmdb_id}/trailer` | 🎞️ Best official YouTube trailer (`null` without `TMDB_API_KEY`) |
 | `GET` | `/tmdb/movie/{tmdb_id}` | Cached TMDB metadata proxy (hides the API key) |
@@ -271,7 +272,8 @@ Simply connect the repository to your platform of choice — no additional confi
 |----------|---------|-------------|
 | `TMDB_API_KEY` | — | **Recommended.** Posters, overviews and trailers for all ~87k movies. Without it only the ~3,100 cached titles have posters and trailers fall back to a YouTube search. Free key: [themoviedb.org/settings/api](https://www.themoviedb.org/settings/api) |
 | `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` | — | Live new-release songs, Spotify search and "more by this artist" (song dataset ends in 2023). From [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard). ⚠️ Spotify only serves Web API requests when the **app owner's account has Premium**; otherwise `/api/v1/health` shows the reason in `spotify_error`. |
-| `SPOTIFY_MARKET` | `IN` | Country used for Spotify search and new releases |
+| `SPOTIFY_MARKET` | `IN` | Country used for Spotify search and new releases (also the iTunes chart country) |
+| `ITUNES_FALLBACK` | `1` | Free fallback for new songs when Spotify isn't available: Apple's top-songs chart + iTunes search, with 30-second previews. `0` disables it |
 | `INKPICK_HYBRID_ALPHA` | `0.65` | Content weight in hybrid blending (1 = content only) |
 | `INTERNAL_SECRET_TOKEN` | — | Protects `POST /api/v1/metadata/cache` |
 | `PORT` | `8000` | Server bind port (auto-set by most platforms) |

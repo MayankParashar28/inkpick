@@ -34,11 +34,11 @@ const FRESH_LISTS = {
     '🔥 Trending': { tab: 'movies', url: '/api/v1/movies/fresh?list=trending', title: '🔥 Trending this week' },
     '🆕 Now Playing': { tab: 'movies', url: '/api/v1/movies/fresh?list=now_playing', title: '🆕 Now playing in cinemas' },
     '📅 Upcoming': { tab: 'movies', url: '/api/v1/movies/fresh?list=upcoming', title: '📅 Coming soon' },
-    '🆕 New Releases': { tab: 'songs', url: '/api/v1/songs/fresh', title: '🆕 New releases on Spotify' },
+    '🆕 New Releases': { tab: 'songs', url: '/api/v1/songs/fresh', title: '🆕 Top new songs right now' },
 };
 const FRESH_ROW = {
     movies: { label: '🆕 Now Playing', title: '🆕 New in cinemas' },
-    songs: { label: '🆕 New Releases', title: '🆕 Fresh on Spotify' },
+    songs: { label: '🆕 New Releases', title: '🆕 Fresh this week' },
 };
 const NEEDS_KEY = {
     movies: ['🎬 New releases need a TMDB key.', 'Add <code>TMDB_API_KEY</code> to the server environment to see live movies.'],
@@ -79,7 +79,7 @@ function escapeHtml(value) {
 
 function domainOf(item) {
     if (item.tmdbId === -2) return 'courses';
-    if (item.spotifyId) return 'songs';
+    if (item.spotifyId || item.itunesId) return 'songs';
     return 'movies';
 }
 
@@ -571,7 +571,7 @@ function buildCard(item, i) {
         : `<div class="skeleton-sketch">${generateMovieSketch(item)}</div>`;
 
     const isNew = (domain === 'movies' || domain === 'songs') && (item.releaseYear || 0) >= NEW_RELEASE_YEAR;
-    const labelText = isCourse ? (item.album || 'Course') : isMusic ? 'Track' : isNew ? 'New' : 'Film';
+    const labelText = isCourse ? (item.album || 'Course') : isNew ? 'New' : isMusic ? 'Track' : 'Film';
     const labelClass = String(labelText).toLowerCase().replace(/[^a-z0-9]+/g, '-');
     const score = item.similarity > 0 ? `<span class="match-score">${Math.round(item.similarity * 100)}% match</span>` : '';
     const voteAvg = meta && meta.vote_average ? `<span class="rating">⭐ ${Number(meta.vote_average).toFixed(1)}</span>` : '';
@@ -742,6 +742,11 @@ async function selectItem(item, { push = true } = {}) {
         playLink.href = `https://open.spotify.com/track/${encodeURIComponent(item.spotifyId)}`;
         playText.textContent = 'Play on Spotify';
         playLink.hidden = false;
+    } else if (isMusic) {
+        // Newer songs from Apple's charts: open the same song in Spotify search
+        playLink.href = `https://open.spotify.com/search/${encodeURIComponent(`${item.title} ${item.artist || ''}`.trim())}`;
+        playText.textContent = 'Find on Spotify';
+        playLink.hidden = false;
     } else if (isCourse && /^https?:\/\//.test(item.url || '')) {
         playLink.href = item.url;
         playText.textContent = `Start on ${item.album}`;
@@ -755,6 +760,7 @@ async function selectItem(item, { push = true } = {}) {
     }
 
     if (domain === 'movies') loadTrailerButton(item, seq);
+    if (isMusic) setupPreview(item);
     syncSaveButtons(domain, id);
     detailView.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
     loadSimilar(item);
@@ -959,7 +965,7 @@ async function getFresh(label) {
     const { url } = FRESH_LISTS[label];
     if (freshCache.has(url)) return freshCache.get(url);
     const data = await getJSON(url);
-    const value = { items: data.results || [], configured: !!(data.tmdb_configured || data.spotify_configured), error: data.error || null };
+    const value = { items: data.results || [], configured: !!(data.tmdb_configured || data.spotify_configured || data.source), error: data.error || null };
     freshCache.set(url, value);
     return value;
 }
@@ -1037,6 +1043,7 @@ let pendingTrailer = null;
 
 function resetTrailer() {
     pendingTrailer = null;
+    resetPreview();
     const btn = document.getElementById('det-trailer');
     const wrap = document.getElementById('trailer-wrap');
     if (btn) btn.hidden = true;
@@ -1074,6 +1081,42 @@ function playTrailer() {
     wrap.hidden = false;
     wrap.scrollIntoView({ behavior: prefersReducedMotion() ? 'auto' : 'smooth', block: 'center' });
     talk('Popcorn time! 🍿', 'Dance');
+}
+
+// ── 30-second song previews (iTunes) ─────────────────
+let previewAudio = null;
+
+function resetPreview() {
+    if (previewAudio) { previewAudio.pause(); previewAudio = null; }
+    const btn = document.getElementById('det-preview');
+    if (btn) { btn.hidden = true; btn.textContent = '▶ 30s preview'; btn.setAttribute('aria-pressed', 'false'); }
+}
+
+function setupPreview(item) {
+    const btn = document.getElementById('det-preview');
+    if (!btn) return;
+    const url = typeof item.preview === 'string' && /^https:\/\/[a-z0-9.-]+\.apple\.com\//i.test(item.preview) ? item.preview : null;
+    if (!url) return;
+    btn.hidden = false;
+    btn.onclick = () => {
+        if (!previewAudio) {
+            previewAudio = new Audio(url);
+            previewAudio.addEventListener('ended', () => {
+                btn.textContent = '▶ 30s preview';
+                btn.setAttribute('aria-pressed', 'false');
+            });
+        }
+        if (previewAudio.paused) {
+            previewAudio.play().catch(() => talk("Couldn't play the preview 🙉", 'No'));
+            btn.textContent = '⏸ Pause preview';
+            btn.setAttribute('aria-pressed', 'true');
+            talk('Turn it up! 🎶', 'Dance');
+        } else {
+            previewAudio.pause();
+            btn.textContent = '▶ 30s preview';
+            btn.setAttribute('aria-pressed', 'false');
+        }
+    };
 }
 
 // ── TMDB metadata backfill ───────────────────────────
@@ -1136,12 +1179,13 @@ const pendingCovers = new Set();
 let coverTimer = null;
 
 function safeCoverUrl(url) {
-    return typeof url === 'string' && /^https:\/\/[a-z0-9.-]+\.(spotifycdn\.com|scdn\.co)\//i.test(url) ? url : null;
+    return typeof url === 'string' && /^https:\/\/[a-z0-9.-]+\.(spotifycdn\.com|scdn\.co|mzstatic\.com)\//i.test(url) ? url : null;
 }
 
-// Spotify image ids encode the size: 00001e02 = 300px, 0000b273 = 640px
+// Spotify image ids encode the size (00001e02 = 300px, 0000b273 = 640px);
+// Apple artwork URLs end in /300x300bb.jpg and accept any size
 function largeCover(url) {
-    return url.replace('ab67616d00001e02', 'ab67616d0000b273');
+    return url.replace('ab67616d00001e02', 'ab67616d0000b273').replace(/\/300x300bb\.jpg$/, '/600x600bb.jpg');
 }
 
 function coverImg(url, { large = false, eager = false } = {}) {
@@ -1152,6 +1196,7 @@ function coverImg(url, { large = false, eager = false } = {}) {
 
 function musicArtHtml(item, opts = {}) {
     const id = item.spotifyId;
+    if (!id && safeCoverUrl(item.cover)) return coverImg(item.cover, opts);   // iTunes songs
     if (id && item.cover && !(id in songCovers)) songCovers[id] = safeCoverUrl(item.cover);
     const url = id ? songCovers[id] : null;
     if (url) return coverImg(url, opts);
