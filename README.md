@@ -225,6 +225,7 @@ All endpoints live under `/api/v1`. `{domain}` is one of `movies`, `songs`, `cou
 | `GET` | `/songs/mood?energy=0.8&danceability=0.7&tempo=128` | 🎚️ Songs closest to a target mood (all params optional) |
 | `GET` | `/suggest/{domain}?q=toy` | 🔎 Instant type-ahead titles (prefix matches first) |
 | `POST` | `/songs/covers` | `{"ids": ["<spotifyId>", …]}` → album cover URLs for up to 50 tracks |
+| `GET` | `/songs/fresh` | 🆕 New releases from Spotify (needs Spotify keys) |
 | `GET` | `/movies/fresh?list=trending` | 🆕 Live movies: `trending`, `now_playing`, `upcoming`, `popular` |
 | `GET` | `/movies/{tmdb_id}/trailer` | 🎞️ Best official YouTube trailer (`null` without `TMDB_API_KEY`) |
 | `GET` | `/tmdb/movie/{tmdb_id}` | Cached TMDB metadata proxy (hides the API key) |
@@ -269,6 +270,8 @@ Simply connect the repository to your platform of choice — no additional confi
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TMDB_API_KEY` | — | **Recommended.** Posters, overviews and trailers for all ~87k movies. Without it only the ~3,100 cached titles have posters and trailers fall back to a YouTube search. Free key: [themoviedb.org/settings/api](https://www.themoviedb.org/settings/api) |
+| `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` | — | Live new-release songs, Spotify search and "more by this artist" (song dataset ends in 2023). From [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard). ⚠️ Spotify only serves Web API requests when the **app owner's account has Premium**; otherwise `/api/v1/health` shows the reason in `spotify_error`. |
+| `SPOTIFY_MARKET` | `IN` | Country used for Spotify search and new releases |
 | `INKPICK_HYBRID_ALPHA` | `0.65` | Content weight in hybrid blending (1 = content only) |
 | `INTERNAL_SECRET_TOKEN` | — | Protects `POST /api/v1/metadata/cache` |
 | `PORT` | `8000` | Server bind port (auto-set by most platforms) |

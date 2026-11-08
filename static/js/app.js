@@ -17,7 +17,7 @@ const MASCOT_SRC = '/static/vendor/model-viewer-4.3.1.min.js';
 
 const CATEGORIES = {
     movies: ['All', '🔥 Trending', '🆕 Now Playing', '📅 Upcoming', 'Action', 'Sci-Fi', 'Horror', 'Romance', 'Comedy', 'Drama', 'Animation', 'Thriller'],
-    songs: ['All', 'Bollywood', 'Pop', 'Rock', 'Electronic', 'Jazz', 'Chill', 'Dance'],
+    songs: ['All', '🆕 New Releases', 'Bollywood', 'Pop', 'Rock', 'Electronic', 'Jazz', 'Chill', 'Dance'],
     courses: ['All', 'YouTube', 'Web Dev', 'Design', 'Business', 'Music'],
 };
 
@@ -29,11 +29,20 @@ const COURSE_FALLBACKS = {
     'default': 'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=500&q=70',
 };
 
-// Live TMDB lists (the MovieLens catalog stops in mid-2023)
+// Live lists: TMDB for movies, Spotify for songs (both datasets stop in 2023)
 const FRESH_LISTS = {
-    '🔥 Trending': { list: 'trending', title: '🔥 Trending this week' },
-    '🆕 Now Playing': { list: 'now_playing', title: '🆕 Now playing in cinemas' },
-    '📅 Upcoming': { list: 'upcoming', title: '📅 Coming soon' },
+    '🔥 Trending': { tab: 'movies', url: '/api/v1/movies/fresh?list=trending', title: '🔥 Trending this week' },
+    '🆕 Now Playing': { tab: 'movies', url: '/api/v1/movies/fresh?list=now_playing', title: '🆕 Now playing in cinemas' },
+    '📅 Upcoming': { tab: 'movies', url: '/api/v1/movies/fresh?list=upcoming', title: '📅 Coming soon' },
+    '🆕 New Releases': { tab: 'songs', url: '/api/v1/songs/fresh', title: '🆕 New releases on Spotify' },
+};
+const FRESH_ROW = {
+    movies: { label: '🆕 Now Playing', title: '🆕 New in cinemas' },
+    songs: { label: '🆕 New Releases', title: '🆕 Fresh on Spotify' },
+};
+const NEEDS_KEY = {
+    movies: ['🎬 New releases need a TMDB key.', 'Add <code>TMDB_API_KEY</code> to the server environment to see live movies.'],
+    songs: ['🎧 New releases need Spotify keys.', 'Add <code>SPOTIFY_CLIENT_ID</code> and <code>SPOTIFY_CLIENT_SECRET</code> to the server environment.'],
 };
 const NEW_RELEASE_YEAR = 2023;
 
@@ -330,7 +339,7 @@ async function fetchDiscovery(append = false) {
             renderSpotlight(items[0]);
             renderItems(items.slice(1));
             renderBecause();
-            if (tab === 'movies') renderFreshRow();
+            if (FRESH_ROW[tab]) renderFreshRow();
         } else {
             renderItems(items, true);
         }
@@ -473,7 +482,7 @@ function renderPills() {
             currentGenre = cat;
             genrePills.querySelectorAll('.pill').forEach(btn => btn.classList.toggle('active', btn === p));
             if (cat === 'All') fetchDiscovery();
-            else if (currentTab === 'movies' && FRESH_LISTS[cat]) showFreshList(cat);
+            else if (FRESH_LISTS[cat] && FRESH_LISTS[cat].tab === currentTab) showFreshList(cat);
             else handleSearch(cat);
         };
         genrePills.appendChild(p);
@@ -529,7 +538,7 @@ function renderSpotlight(item) {
                 <p class="hero-desc">${escapeHtml(desc)}</p>
                 <div class="detail-meta">
                     <span>${escapeHtml(item.releaseYear || '')}</span>
-                    ${isMusic ? `<span class="acoustic-badge">${Math.round(item.tempo)} BPM</span>` : ''}
+                    ${isMusic && item.tempo ? `<span class="acoustic-badge">${Math.round(item.tempo)} BPM</span>` : ''}
                     ${isCourse ? `<span class="rating">⭐ ${escapeHtml(item.rating)}</span>` : ''}
                 </div>
             </div>
@@ -561,7 +570,7 @@ function buildCard(item, i) {
         : poster ? `<img src="${poster}" class="loaded" alt="" loading="lazy" decoding="async">`
         : `<div class="skeleton-sketch">${generateMovieSketch(item)}</div>`;
 
-    const isNew = domain === 'movies' && (item.releaseYear || 0) >= NEW_RELEASE_YEAR;
+    const isNew = (domain === 'movies' || domain === 'songs') && (item.releaseYear || 0) >= NEW_RELEASE_YEAR;
     const labelText = isCourse ? (item.album || 'Course') : isMusic ? 'Track' : isNew ? 'New' : 'Film';
     const labelClass = String(labelText).toLowerCase().replace(/[^a-z0-9]+/g, '-');
     const score = item.similarity > 0 ? `<span class="match-score">${Math.round(item.similarity * 100)}% match</span>` : '';
@@ -680,9 +689,9 @@ async function selectItem(item, { push = true } = {}) {
         tagline.textContent = item.artist;
         desc.textContent = `Featured in "${item.album || 'Single'}".`;
         metaEl.innerHTML = `<span>${escapeHtml(item.releaseYear || '')}</span>
-            <span class="acoustic-badge">${Math.round(item.tempo)} BPM</span>
-            <span class="acoustic-badge">⚡ ${Math.round(item.energy * 100)}% energy</span>
-            <span class="acoustic-badge">🕺 ${Math.round(item.danceability * 100)}% dance</span>`;
+            ${item.tempo ? `<span class="acoustic-badge">${Math.round(item.tempo)} BPM</span>` : ''}
+            ${item.energy != null ? `<span class="acoustic-badge">⚡ ${Math.round(item.energy * 100)}% energy</span>` : ''}
+            ${item.danceability != null ? `<span class="acoustic-badge">🕺 ${Math.round(item.danceability * 100)}% dance</span>` : ''}`;
     } else if (isCourse) {
         imgContainer.innerHTML = generateCoursePoster(item, true);
         tagline.textContent = `Instructor: ${item.artist}`;
@@ -942,27 +951,31 @@ function hideBecause() {
     if (fresh) fresh.hidden = true;
 }
 
-// ── New releases (live from TMDB) ────────────────────
+// ── New releases (live from TMDB / Spotify) ──────────
 let freshSeq = 0;
-const freshCache = new Map();   // list -> { items, configured }
+const freshCache = new Map();   // url -> { items, configured }
 
-async function getFresh(list) {
-    if (freshCache.has(list)) return freshCache.get(list);
-    const data = await getJSON(`/api/v1/movies/fresh?list=${list}`);
-    const value = { items: data.results || [], configured: !!data.tmdb_configured };
-    freshCache.set(list, value);
+async function getFresh(label) {
+    const { url } = FRESH_LISTS[label];
+    if (freshCache.has(url)) return freshCache.get(url);
+    const data = await getJSON(url);
+    const value = { items: data.results || [], configured: !!(data.tmdb_configured || data.spotify_configured), error: data.error || null };
+    freshCache.set(url, value);
     return value;
 }
 
 async function renderFreshRow() {
     const row = document.getElementById('fresh-row');
     const target = document.getElementById('fresh-results');
-    if (!row || !target) return;
+    const tab = currentTab;
+    const conf = FRESH_ROW[tab];
+    if (!row || !target || !conf) return;
     const seq = ++freshSeq;
     try {
-        const { items } = await getFresh('now_playing');
-        if (seq !== freshSeq || currentTab !== 'movies') return;
+        const { items } = await getFresh(conf.label);
+        if (seq !== freshSeq || currentTab !== tab) return;
         if (!items.length) { row.hidden = true; return; }
+        document.getElementById('fresh-title').textContent = conf.title;
         renderItems(items.slice(0, 8), false, target);
         row.hidden = false;
     } catch {
@@ -971,26 +984,27 @@ async function renderFreshRow() {
 }
 
 async function showFreshList(label) {
-    const { list, title } = FRESH_LISTS[label];
+    const { tab, title } = FRESH_LISTS[label];
     const seq = ++searchSeq;
     hideBecause();
     loadMoreWrap.hidden = true;
     gridHeader.textContent = title;
     showSkeletons(8);
     try {
-        const { items, configured } = await getFresh(list);
-        if (seq !== searchSeq || currentTab !== 'movies') return;
+        const { items, configured, error } = await getFresh(label);
+        if (seq !== searchSeq || currentTab !== tab) return;
         if (!items.length) {
-            grid.innerHTML = configured
-                ? emptyState('🎬 Nothing here right now.', 'Check back soon for fresh releases.')
-                : emptyState('🎬 New releases need a TMDB key.', 'Add <code>TMDB_API_KEY</code> to the server environment to see live movies.');
+            freshCache.delete(FRESH_LISTS[label].url);   // retry next time
+            grid.innerHTML = !configured ? emptyState(...NEEDS_KEY[tab])
+                : error ? emptyState('🎧 New releases are unavailable right now.', escapeHtml(error))
+                : emptyState('✨ Nothing here right now.', 'Check back soon for fresh releases.');
             return;
         }
         renderItems(items);
-        talk('Hot off the press! 🍿', 'ThumbsUp');
+        talk(tab === 'songs' ? 'Fresh tracks, just dropped! 🎧' : 'Hot off the press! 🍿', 'ThumbsUp');
     } catch (err) {
         console.error('Fresh list error:', err);
-        if (seq === searchSeq) grid.innerHTML = emptyState('⚠️ Couldn\'t reach the cinema.', 'Try again in a moment.');
+        if (seq === searchSeq) grid.innerHTML = emptyState('⚠️ Couldn\'t load new releases.', 'Try again in a moment.');
     }
 }
 
