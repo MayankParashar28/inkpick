@@ -17,6 +17,7 @@ from modules.utils import sanitize_query
 from services.audio_service import AudioService
 from services.cinema_service import CinemaService
 from services.edu_service import EduService
+from services.live_movies import LiveMovies, parse_live_id
 from services.tmdb import TMDBService, slim
 
 load_dotenv()
@@ -57,6 +58,7 @@ async def lifespan(app: FastAPI):
     cinema, audio, edu = load_services(DATA_PATH, MODEL_PATH)
 
     app.state.cinema_service = cinema
+    app.state.live_movies = LiveMovies(tmdb_service, cinema.movie_engine)
     registry.register("movies", cinema)
     registry.register("songs", audio)
     registry.register("courses", edu)
@@ -102,7 +104,7 @@ async def cache_headers(request: Request, call_next):
             )
         elif path.startswith(("/api/v1/discover/", "/api/v1/recommend/", "/api/v1/search/",
                               "/api/v1/item/", "/api/v1/tmdb/movie/", "/api/v1/songs/mood",
-                              "/api/v1/suggest/")):
+                              "/api/v1/suggest/", "/api/v1/movies/fresh")):
             response.headers["Cache-Control"] = "public, max-age=300"
     return response
 
@@ -181,6 +183,11 @@ async def universal_search(
     if len(q) < 2:
         return {"results": [], "suggestion": None}
     results, suggestion = engine.search(q, limit=limit)
+    if domain == "movies":
+        # Catalog ends mid-2023: blend in newer titles from TMDB search
+        results = await app.state.live_movies.search(q, results, limit)
+        if results:
+            suggestion = None
     return {"results": await maybe_enrich(domain, results), "suggestion": suggestion}
 
 
@@ -196,6 +203,16 @@ async def suggest(
     if len(q) < 2:
         return {"results": []}
     return {"results": engine.suggest(q, limit=limit)}
+
+
+@app.get("/api/v1/movies/fresh")
+async def fresh_movies(
+    kind: str = Query("now_playing", alias="list", pattern="^(trending|now_playing|upcoming|popular)$"),
+    page: int = Query(1, ge=1, le=20),
+):
+    """🆕 Live new releases from TMDB (the MovieLens catalog ends in 2023)."""
+    live = app.state.live_movies
+    return {"results": await live.fresh(kind, page), "list": kind, "tmdb_configured": live.enabled}
 
 
 @app.get("/api/v1/movies/{tmdb_id}/trailer")
@@ -247,6 +264,12 @@ async def universal_recommend(
     """Unified recommendation endpoint for Movies, Songs and Courses."""
     engine = get_engine_or_404(content_type)
     parsed_id = parse_item_id(engine, content_type, item_id)
+    live_id = parse_live_id(parsed_id) if content_type == "movies" else None
+    if live_id is not None:
+        recs = await app.state.live_movies.recommend(live_id, top_n=limit)
+        if not recs:
+            raise HTTPException(status_code=404, detail="Item not found.")
+        return {"recommendations": recs, "category": content_type}
     recs = engine.recommend(parsed_id, top_n=limit, genre=genre)
     if not recs:
         raise HTTPException(status_code=404, detail="Item not found.")
@@ -269,7 +292,9 @@ async def discover_content(
 async def get_item(content_type: str, item_id: str):
     """Look up a single item (used for shareable deep links)."""
     engine = get_engine_or_404(content_type)
-    item = engine.get_item(parse_item_id(engine, content_type, item_id))
+    parsed_id = parse_item_id(engine, content_type, item_id)
+    live_id = parse_live_id(parsed_id) if content_type == "movies" else None
+    item = await app.state.live_movies.get_item(live_id) if live_id is not None else engine.get_item(parsed_id)
     if not item:
         raise HTTPException(status_code=404, detail="Item not found.")
     enriched = await maybe_enrich(content_type, [item])
