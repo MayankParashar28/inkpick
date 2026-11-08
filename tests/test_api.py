@@ -138,3 +138,15 @@ def test_cache_headers(client):
     assert "immutable" in client.get("/static/assets/robot.glb").headers["cache-control"]
     assert client.get("/static/index.html").headers["cache-control"] == "no-cache"
     assert "max-age" in client.get("/api/v1/discover/songs?limit=1").headers["cache-control"]
+
+
+def test_song_cover_batch_validation(client):
+    assert client.post("/api/v1/songs/covers", json={"ids": "x"}).status_code == 422
+    assert client.post("/api/v1/songs/covers", json={"ids": ["x"] * 51}).status_code == 422
+    # Malformed ids are ignored (never forwarded to Spotify)
+    assert client.post("/api/v1/songs/covers", json={"ids": ["../../etc", "short"]}).json() == {"covers": {}}
+
+
+def test_song_covers_attached_from_cache(client):
+    first = client.get("/api/v1/discover/songs?limit=3").json()["results"]
+    assert all(s.get("cover", "").startswith("https://") for s in first), "bundled cover cache"

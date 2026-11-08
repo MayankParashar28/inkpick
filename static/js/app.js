@@ -16,8 +16,8 @@ const THEME_KEY = 'inkpick:theme';
 const MASCOT_SRC = '/static/vendor/model-viewer-4.3.1.min.js';
 
 const CATEGORIES = {
-    movies: ['All', 'Action', 'Sci-Fi', 'Horror', 'Romance', 'Comedy', 'Drama', 'Animation', 'Thriller'],
-    songs: ['All', 'Bollywood', 'Pop', 'Rock', 'Electronic', 'Jazz', 'Chill', 'Dance'],
+    movies: ['All', '🔥 Trending', '🆕 Now Playing', '📅 Upcoming', 'Action', 'Sci-Fi', 'Horror', 'Romance', 'Comedy', 'Drama', 'Animation', 'Thriller'],
+    songs: ['All', '🆕 New Releases', 'Bollywood', 'Pop', 'Rock', 'Electronic', 'Jazz', 'Chill', 'Dance'],
     courses: ['All', 'YouTube', 'Web Dev', 'Design', 'Business', 'Music'],
 };
 
@@ -28,6 +28,23 @@ const COURSE_FALLBACKS = {
     'music': 'https://images.unsplash.com/photo-1511379938547-c1f69419868d?w=500&q=70',
     'default': 'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=500&q=70',
 };
+
+// Live lists: TMDB for movies, Spotify for songs (both datasets stop in 2023)
+const FRESH_LISTS = {
+    '🔥 Trending': { tab: 'movies', url: '/api/v1/movies/fresh?list=trending', title: '🔥 Trending this week' },
+    '🆕 Now Playing': { tab: 'movies', url: '/api/v1/movies/fresh?list=now_playing', title: '🆕 Now playing in cinemas' },
+    '📅 Upcoming': { tab: 'movies', url: '/api/v1/movies/fresh?list=upcoming', title: '📅 Coming soon' },
+    '🆕 New Releases': { tab: 'songs', url: '/api/v1/songs/fresh', title: '🆕 Top new songs right now' },
+};
+const FRESH_ROW = {
+    movies: { label: '🆕 Now Playing', title: '🆕 New in cinemas' },
+    songs: { label: '🆕 New Releases', title: '🆕 Fresh this week' },
+};
+const NEEDS_KEY = {
+    movies: ['🎬 New releases need a TMDB key.', 'Add <code>TMDB_API_KEY</code> to the server environment to see live movies.'],
+    songs: ['🎧 New releases need Spotify keys.', 'Add <code>SPOTIFY_CLIENT_ID</code> and <code>SPOTIFY_CLIENT_SECRET</code> to the server environment.'],
+};
+const NEW_RELEASE_YEAR = 2023;
 
 const MOOD_PRESETS = {
     chill: { energy: 0.3, dance: 0.5, tempo: 85 },
@@ -62,7 +79,7 @@ function escapeHtml(value) {
 
 function domainOf(item) {
     if (item.tmdbId === -2) return 'courses';
-    if (item.spotifyId) return 'songs';
+    if (item.spotifyId || item.itunesId) return 'songs';
     return 'movies';
 }
 
@@ -125,6 +142,7 @@ const Saved = {
         const { reasons, similarity, ...rest } = item;
         const meta = item.tmdbId > 0 ? metaCache[item.tmdbId] : null;
         if (meta) rest.cached = { poster_path: meta.poster_path, overview: meta.overview, vote_average: meta.vote_average };
+        if (item.spotifyId && songCovers[item.spotifyId]) rest.cover = songCovers[item.spotifyId];
         this.items.unshift({ domain, id, item: rest, savedAt: Date.now() });
         this.persist();
         return true;
@@ -321,6 +339,7 @@ async function fetchDiscovery(append = false) {
             renderSpotlight(items[0]);
             renderItems(items.slice(1));
             renderBecause();
+            if (FRESH_ROW[tab]) renderFreshRow();
         } else {
             renderItems(items, true);
         }
@@ -463,6 +482,7 @@ function renderPills() {
             currentGenre = cat;
             genrePills.querySelectorAll('.pill').forEach(btn => btn.classList.toggle('active', btn === p));
             if (cat === 'All') fetchDiscovery();
+            else if (FRESH_LISTS[cat] && FRESH_LISTS[cat].tab === currentTab) showFreshList(cat);
             else handleSearch(cat);
         };
         genrePills.appendChild(p);
@@ -501,14 +521,14 @@ function renderSpotlight(item) {
     const meta = domain === 'movies' ? metaCache[item.tmdbId] : null;
     const poster = posterUrl(meta, POSTER_LG);
     const image = isCourse ? generateCoursePoster(item, true)
-        : isMusic ? generateMusicArt(item)
+        : isMusic ? musicArtHtml(item, { large: true, eager: true })
         : poster ? `<img src="${poster}" alt="" fetchpriority="high" decoding="async">` : generateMovieSketch(item);
     const desc = isCourse ? `A top-rated lesson from ${item.album}. Category: ${item.category}`
         : isMusic ? `A track from "${item.album || 'Unknown'}" by ${item.artist}.`
         : (meta && meta.overview) || 'A classic sketch in the vault...';
 
     spotlightContainer.innerHTML = `
-        <div class="hero-card ${isCourse ? 'course-hero' : ''}" role="button" tabindex="0">
+        <div class="hero-card ${isCourse ? 'course-hero' : isMusic ? 'music-hero' : ''}" role="button" tabindex="0">
             <div class="masking-tape top-left"></div>
             <div class="masking-tape top-right"></div>
             <div class="hero-img">${image}</div>
@@ -518,12 +538,13 @@ function renderSpotlight(item) {
                 <p class="hero-desc">${escapeHtml(desc)}</p>
                 <div class="detail-meta">
                     <span>${escapeHtml(item.releaseYear || '')}</span>
-                    ${isMusic ? `<span class="acoustic-badge">${Math.round(item.tempo)} BPM</span>` : ''}
+                    ${isMusic && item.tempo ? `<span class="acoustic-badge">${Math.round(item.tempo)} BPM</span>` : ''}
                     ${isCourse ? `<span class="rating">⭐ ${escapeHtml(item.rating)}</span>` : ''}
                 </div>
             </div>
         </div>`;
     const card = spotlightContainer.firstElementChild;
+    if (isMusic) queueCovers([item]);
     card.onclick = () => selectItem(item);
     card.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectItem(item); } };
 }
@@ -538,18 +559,19 @@ function buildCard(item, i) {
     const saved = Saved.has(domain, id);
 
     const card = document.createElement('article');
-    card.className = `card ${isCourse ? 'course-item' : ''}`;
+    card.className = `card ${isCourse ? 'course-item' : isMusic ? 'music-item' : ''}`;
     card.tabIndex = 0;
     if (item.tmdbId > 0) card.dataset.tmdbId = item.tmdbId;
     card.style.setProperty('--rand-rot', `${(Math.random() * 4 - 2).toFixed(1)}deg`);
     card.style.animationDelay = `${Math.min(i, 12) * 0.04}s`;
 
     const imageHtml = isCourse ? generateCoursePoster(item)
-        : isMusic ? generateMusicArt(item)
+        : isMusic ? musicArtHtml(item)
         : poster ? `<img src="${poster}" class="loaded" alt="" loading="lazy" decoding="async">`
         : `<div class="skeleton-sketch">${generateMovieSketch(item)}</div>`;
 
-    const labelText = isCourse ? (item.album || 'Course') : isMusic ? 'Track' : 'Film';
+    const isNew = (domain === 'movies' || domain === 'songs') && (item.releaseYear || 0) >= NEW_RELEASE_YEAR;
+    const labelText = isCourse ? (item.album || 'Course') : isNew ? 'New' : isMusic ? 'Track' : 'Film';
     const labelClass = String(labelText).toLowerCase().replace(/[^a-z0-9]+/g, '-');
     const score = item.similarity > 0 ? `<span class="match-score">${Math.round(item.similarity * 100)}% match</span>` : '';
     const voteAvg = meta && meta.vote_average ? `<span class="rating">⭐ ${Number(meta.vote_average).toFixed(1)}</span>` : '';
@@ -591,6 +613,7 @@ function renderItems(items, append = false, target = grid) {
     });
     if (!append) target.replaceChildren(fragment);
     else target.appendChild(fragment);
+    queueCovers(items);
 }
 
 // ── Detail view ──────────────────────────────────────
@@ -661,13 +684,14 @@ async function selectItem(item, { push = true } = {}) {
     const metaEl = document.getElementById('det-meta');
 
     if (isMusic) {
-        imgContainer.innerHTML = generateMusicArt(item);
+        imgContainer.innerHTML = musicArtHtml(item, { large: true, eager: true });
+        queueCovers([item]);
         tagline.textContent = item.artist;
         desc.textContent = `Featured in "${item.album || 'Single'}".`;
         metaEl.innerHTML = `<span>${escapeHtml(item.releaseYear || '')}</span>
-            <span class="acoustic-badge">${Math.round(item.tempo)} BPM</span>
-            <span class="acoustic-badge">⚡ ${Math.round(item.energy * 100)}% energy</span>
-            <span class="acoustic-badge">🕺 ${Math.round(item.danceability * 100)}% dance</span>`;
+            ${item.tempo ? `<span class="acoustic-badge">${Math.round(item.tempo)} BPM</span>` : ''}
+            ${item.energy != null ? `<span class="acoustic-badge">⚡ ${Math.round(item.energy * 100)}% energy</span>` : ''}
+            ${item.danceability != null ? `<span class="acoustic-badge">🕺 ${Math.round(item.danceability * 100)}% dance</span>` : ''}`;
     } else if (isCourse) {
         imgContainer.innerHTML = generateCoursePoster(item, true);
         tagline.textContent = `Instructor: ${item.artist}`;
@@ -675,13 +699,19 @@ async function selectItem(item, { push = true } = {}) {
         metaEl.innerHTML = `<span>Rating: ${escapeHtml(item.rating)} ★</span> <span class="acoustic-badge">${escapeHtml(item.category)}</span>`;
     } else {
         let meta = metaCache[item.tmdbId] || item.cached;
-        if (!meta && item.tmdbId > 0) {
-            imgContainer.innerHTML = generateMovieSketch(item);
-            desc.textContent = 'Inkpick is sketching the details...';
+        // List results lack runtime/tagline: fetch full details when missing
+        if (item.tmdbId > 0 && (!meta || meta.runtime === undefined)) {
+            if (!meta) {
+                imgContainer.innerHTML = generateMovieSketch(item);
+                desc.textContent = 'Inkpick is sketching the details...';
+            }
             try {
-                meta = await getJSON(`/api/v1/tmdb/movie/${item.tmdbId}`);
-                metaCache[item.tmdbId] = meta;
-                pruneCache();
+                const full = await getJSON(`/api/v1/tmdb/movie/${item.tmdbId}`);
+                if (full && full.title !== 'Unknown') {
+                    meta = { ...(meta || {}), ...full };
+                    metaCache[item.tmdbId] = meta;
+                    pruneCache();
+                }
             } catch (err) {
                 console.error('Detail fetch error:', err);
             }
@@ -712,6 +742,11 @@ async function selectItem(item, { push = true } = {}) {
         playLink.href = `https://open.spotify.com/track/${encodeURIComponent(item.spotifyId)}`;
         playText.textContent = 'Play on Spotify';
         playLink.hidden = false;
+    } else if (isMusic) {
+        // Newer songs from Apple's charts: open the same song in Spotify search
+        playLink.href = `https://open.spotify.com/search/${encodeURIComponent(`${item.title} ${item.artist || ''}`.trim())}`;
+        playText.textContent = 'Find on Spotify';
+        playLink.hidden = false;
     } else if (isCourse && /^https?:\/\//.test(item.url || '')) {
         playLink.href = item.url;
         playText.textContent = `Start on ${item.album}`;
@@ -725,6 +760,7 @@ async function selectItem(item, { push = true } = {}) {
     }
 
     if (domain === 'movies') loadTrailerButton(item, seq);
+    if (isMusic) setupPreview(item);
     syncSaveButtons(domain, id);
     detailView.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
     loadSimilar(item);
@@ -914,8 +950,68 @@ function chooseSuggestion(item) {
 // ── "Because you saved …" ────────────────────────────
 function hideBecause() {
     becauseSeq++;
+    freshSeq++;
     const row = document.getElementById('because');
     if (row) row.hidden = true;
+    const fresh = document.getElementById('fresh-row');
+    if (fresh) fresh.hidden = true;
+}
+
+// ── New releases (live from TMDB / Spotify) ──────────
+let freshSeq = 0;
+const freshCache = new Map();   // url -> { items, configured }
+
+async function getFresh(label) {
+    const { url } = FRESH_LISTS[label];
+    if (freshCache.has(url)) return freshCache.get(url);
+    const data = await getJSON(url);
+    const value = { items: data.results || [], configured: !!(data.tmdb_configured || data.spotify_configured || data.source), error: data.error || null };
+    freshCache.set(url, value);
+    return value;
+}
+
+async function renderFreshRow() {
+    const row = document.getElementById('fresh-row');
+    const target = document.getElementById('fresh-results');
+    const tab = currentTab;
+    const conf = FRESH_ROW[tab];
+    if (!row || !target || !conf) return;
+    const seq = ++freshSeq;
+    try {
+        const { items } = await getFresh(conf.label);
+        if (seq !== freshSeq || currentTab !== tab) return;
+        if (!items.length) { row.hidden = true; return; }
+        document.getElementById('fresh-title').textContent = conf.title;
+        renderItems(items.slice(0, 8), false, target);
+        row.hidden = false;
+    } catch {
+        if (seq === freshSeq) row.hidden = true;
+    }
+}
+
+async function showFreshList(label) {
+    const { tab, title } = FRESH_LISTS[label];
+    const seq = ++searchSeq;
+    hideBecause();
+    loadMoreWrap.hidden = true;
+    gridHeader.textContent = title;
+    showSkeletons(8);
+    try {
+        const { items, configured, error } = await getFresh(label);
+        if (seq !== searchSeq || currentTab !== tab) return;
+        if (!items.length) {
+            freshCache.delete(FRESH_LISTS[label].url);   // retry next time
+            grid.innerHTML = !configured ? emptyState(...NEEDS_KEY[tab])
+                : error ? emptyState('🎧 New releases are unavailable right now.', escapeHtml(error))
+                : emptyState('✨ Nothing here right now.', 'Check back soon for fresh releases.');
+            return;
+        }
+        renderItems(items);
+        talk(tab === 'songs' ? 'Fresh tracks, just dropped! 🎧' : 'Hot off the press! 🍿', 'ThumbsUp');
+    } catch (err) {
+        console.error('Fresh list error:', err);
+        if (seq === searchSeq) grid.innerHTML = emptyState('⚠️ Couldn\'t load new releases.', 'Try again in a moment.');
+    }
 }
 
 async function renderBecause() {
@@ -947,6 +1043,7 @@ let pendingTrailer = null;
 
 function resetTrailer() {
     pendingTrailer = null;
+    resetPreview();
     const btn = document.getElementById('det-trailer');
     const wrap = document.getElementById('trailer-wrap');
     if (btn) btn.hidden = true;
@@ -984,6 +1081,42 @@ function playTrailer() {
     wrap.hidden = false;
     wrap.scrollIntoView({ behavior: prefersReducedMotion() ? 'auto' : 'smooth', block: 'center' });
     talk('Popcorn time! 🍿', 'Dance');
+}
+
+// ── 30-second song previews (iTunes) ─────────────────
+let previewAudio = null;
+
+function resetPreview() {
+    if (previewAudio) { previewAudio.pause(); previewAudio = null; }
+    const btn = document.getElementById('det-preview');
+    if (btn) { btn.hidden = true; btn.textContent = '▶ 30s preview'; btn.setAttribute('aria-pressed', 'false'); }
+}
+
+function setupPreview(item) {
+    const btn = document.getElementById('det-preview');
+    if (!btn) return;
+    const url = typeof item.preview === 'string' && /^https:\/\/[a-z0-9.-]+\.apple\.com\//i.test(item.preview) ? item.preview : null;
+    if (!url) return;
+    btn.hidden = false;
+    btn.onclick = () => {
+        if (!previewAudio) {
+            previewAudio = new Audio(url);
+            previewAudio.addEventListener('ended', () => {
+                btn.textContent = '▶ 30s preview';
+                btn.setAttribute('aria-pressed', 'false');
+            });
+        }
+        if (previewAudio.paused) {
+            previewAudio.play().catch(() => talk("Couldn't play the preview 🙉", 'No'));
+            btn.textContent = '⏸ Pause preview';
+            btn.setAttribute('aria-pressed', 'true');
+            talk('Turn it up! 🎶', 'Dance');
+        } else {
+            previewAudio.pause();
+            btn.textContent = '▶ 30s preview';
+            btn.setAttribute('aria-pressed', 'false');
+        }
+    };
 }
 
 // ── TMDB metadata backfill ───────────────────────────
@@ -1039,6 +1172,73 @@ function generateMasterpieceSketch(item, mode) {
 }
 
 function generateMusicArt(item) { return generateMasterpieceSketch(item, 'music'); }
+
+// ── Album covers (Spotify oEmbed via /api/v1/songs/covers) ──
+const songCovers = {};            // spotifyId -> https url | null (no cover)
+const pendingCovers = new Set();
+let coverTimer = null;
+
+function safeCoverUrl(url) {
+    return typeof url === 'string' && /^https:\/\/[a-z0-9.-]+\.(spotifycdn\.com|scdn\.co|mzstatic\.com)\//i.test(url) ? url : null;
+}
+
+// Spotify image ids encode the size (00001e02 = 300px, 0000b273 = 640px);
+// Apple artwork URLs end in /300x300bb.jpg and accept any size
+function largeCover(url) {
+    return url.replace('ab67616d00001e02', 'ab67616d0000b273').replace(/\/300x300bb\.jpg$/, '/600x600bb.jpg');
+}
+
+function coverImg(url, { large = false, eager = false } = {}) {
+    const src = large ? largeCover(url) : url;
+    const fallback = large && src !== url ? ` onerror="this.onerror=null;this.src='${escapeHtml(url)}'"` : '';
+    return `<img src="${escapeHtml(src)}" class="loaded song-cover" alt="" ${eager ? '' : 'loading="lazy"'} decoding="async"${fallback}>`;
+}
+
+function musicArtHtml(item, opts = {}) {
+    const id = item.spotifyId;
+    if (!id && safeCoverUrl(item.cover)) return coverImg(item.cover, opts);   // iTunes songs
+    if (id && item.cover && !(id in songCovers)) songCovers[id] = safeCoverUrl(item.cover);
+    const url = id ? songCovers[id] : null;
+    if (url) return coverImg(url, opts);
+    // Hand-drawn placeholder, swapped for the real cover when it arrives
+    return `<div class="song-art" data-song-id="${escapeHtml(id || '')}" data-large="${opts.large ? 1 : ''}">${generateMusicArt(item)}</div>`;
+}
+
+function queueCovers(items) {
+    items.forEach(item => {
+        const id = item.spotifyId;
+        if (!id) return;
+        if (item.cover && !(id in songCovers)) songCovers[id] = safeCoverUrl(item.cover);
+        if (!(id in songCovers)) pendingCovers.add(id);
+    });
+    if (pendingCovers.size && !coverTimer) coverTimer = setTimeout(flushCovers, 60);
+}
+
+async function flushCovers() {
+    coverTimer = null;
+    const ids = [...pendingCovers];
+    pendingCovers.clear();
+    for (let i = 0; i < ids.length; i += 50) {
+        const chunk = ids.slice(i, i + 50);
+        try {
+            const { covers } = await getJSON('/api/v1/songs/covers', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ids: chunk }),
+            });
+            for (const [id, url] of Object.entries(covers || {})) {
+                songCovers[id] = safeCoverUrl(url);
+                if (songCovers[id]) applyCover(id, songCovers[id]);
+            }
+        } catch { /* covers are optional — keep the sketch */ }
+    }
+}
+
+function applyCover(id, url) {
+    document.querySelectorAll(`.song-art[data-song-id="${CSS.escape(id)}"]`).forEach(el => {
+        el.outerHTML = coverImg(url, { large: el.dataset.large === '1' });
+    });
+}
 function generateMovieSketch(item) { return generateMasterpieceSketch(item, 'movie'); }
 
 function generateCoursePoster(item, eager = false) {

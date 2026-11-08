@@ -20,6 +20,10 @@ class CinemaService:
 
     @staticmethod
     def parse_id(item_id):
+        """Catalog ids are ints; live TMDB-only movies use "t<tmdbId>"."""
+        item_id = str(item_id)
+        if item_id.startswith("t") and item_id[1:].isdigit():
+            return item_id
         return int(item_id)
 
     def search(self, query: str, limit: int = 12):
