@@ -133,6 +133,7 @@ const Saved = {
         const { reasons, similarity, ...rest } = item;
         const meta = item.tmdbId > 0 ? metaCache[item.tmdbId] : null;
         if (meta) rest.cached = { poster_path: meta.poster_path, overview: meta.overview, vote_average: meta.vote_average };
+        if (item.spotifyId && songCovers[item.spotifyId]) rest.cover = songCovers[item.spotifyId];
         this.items.unshift({ domain, id, item: rest, savedAt: Date.now() });
         this.persist();
         return true;
@@ -511,14 +512,14 @@ function renderSpotlight(item) {
     const meta = domain === 'movies' ? metaCache[item.tmdbId] : null;
     const poster = posterUrl(meta, POSTER_LG);
     const image = isCourse ? generateCoursePoster(item, true)
-        : isMusic ? generateMusicArt(item)
+        : isMusic ? musicArtHtml(item, { large: true, eager: true })
         : poster ? `<img src="${poster}" alt="" fetchpriority="high" decoding="async">` : generateMovieSketch(item);
     const desc = isCourse ? `A top-rated lesson from ${item.album}. Category: ${item.category}`
         : isMusic ? `A track from "${item.album || 'Unknown'}" by ${item.artist}.`
         : (meta && meta.overview) || 'A classic sketch in the vault...';
 
     spotlightContainer.innerHTML = `
-        <div class="hero-card ${isCourse ? 'course-hero' : ''}" role="button" tabindex="0">
+        <div class="hero-card ${isCourse ? 'course-hero' : isMusic ? 'music-hero' : ''}" role="button" tabindex="0">
             <div class="masking-tape top-left"></div>
             <div class="masking-tape top-right"></div>
             <div class="hero-img">${image}</div>
@@ -534,6 +535,7 @@ function renderSpotlight(item) {
             </div>
         </div>`;
     const card = spotlightContainer.firstElementChild;
+    if (isMusic) queueCovers([item]);
     card.onclick = () => selectItem(item);
     card.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectItem(item); } };
 }
@@ -548,14 +550,14 @@ function buildCard(item, i) {
     const saved = Saved.has(domain, id);
 
     const card = document.createElement('article');
-    card.className = `card ${isCourse ? 'course-item' : ''}`;
+    card.className = `card ${isCourse ? 'course-item' : isMusic ? 'music-item' : ''}`;
     card.tabIndex = 0;
     if (item.tmdbId > 0) card.dataset.tmdbId = item.tmdbId;
     card.style.setProperty('--rand-rot', `${(Math.random() * 4 - 2).toFixed(1)}deg`);
     card.style.animationDelay = `${Math.min(i, 12) * 0.04}s`;
 
     const imageHtml = isCourse ? generateCoursePoster(item)
-        : isMusic ? generateMusicArt(item)
+        : isMusic ? musicArtHtml(item)
         : poster ? `<img src="${poster}" class="loaded" alt="" loading="lazy" decoding="async">`
         : `<div class="skeleton-sketch">${generateMovieSketch(item)}</div>`;
 
@@ -602,6 +604,7 @@ function renderItems(items, append = false, target = grid) {
     });
     if (!append) target.replaceChildren(fragment);
     else target.appendChild(fragment);
+    queueCovers(items);
 }
 
 // ── Detail view ──────────────────────────────────────
@@ -672,7 +675,8 @@ async function selectItem(item, { push = true } = {}) {
     const metaEl = document.getElementById('det-meta');
 
     if (isMusic) {
-        imgContainer.innerHTML = generateMusicArt(item);
+        imgContainer.innerHTML = musicArtHtml(item, { large: true, eager: true });
+        queueCovers([item]);
         tagline.textContent = item.artist;
         desc.textContent = `Featured in "${item.album || 'Single'}".`;
         metaEl.innerHTML = `<span>${escapeHtml(item.releaseYear || '')}</span>
@@ -1111,6 +1115,71 @@ function generateMasterpieceSketch(item, mode) {
 }
 
 function generateMusicArt(item) { return generateMasterpieceSketch(item, 'music'); }
+
+// ── Album covers (Spotify oEmbed via /api/v1/songs/covers) ──
+const songCovers = {};            // spotifyId -> https url | null (no cover)
+const pendingCovers = new Set();
+let coverTimer = null;
+
+function safeCoverUrl(url) {
+    return typeof url === 'string' && /^https:\/\/[a-z0-9.-]+\.(spotifycdn\.com|scdn\.co)\//i.test(url) ? url : null;
+}
+
+// Spotify image ids encode the size: 00001e02 = 300px, 0000b273 = 640px
+function largeCover(url) {
+    return url.replace('ab67616d00001e02', 'ab67616d0000b273');
+}
+
+function coverImg(url, { large = false, eager = false } = {}) {
+    const src = large ? largeCover(url) : url;
+    const fallback = large && src !== url ? ` onerror="this.onerror=null;this.src='${escapeHtml(url)}'"` : '';
+    return `<img src="${escapeHtml(src)}" class="loaded song-cover" alt="" ${eager ? '' : 'loading="lazy"'} decoding="async"${fallback}>`;
+}
+
+function musicArtHtml(item, opts = {}) {
+    const id = item.spotifyId;
+    if (id && item.cover && !(id in songCovers)) songCovers[id] = safeCoverUrl(item.cover);
+    const url = id ? songCovers[id] : null;
+    if (url) return coverImg(url, opts);
+    // Hand-drawn placeholder, swapped for the real cover when it arrives
+    return `<div class="song-art" data-song-id="${escapeHtml(id || '')}" data-large="${opts.large ? 1 : ''}">${generateMusicArt(item)}</div>`;
+}
+
+function queueCovers(items) {
+    items.forEach(item => {
+        const id = item.spotifyId;
+        if (!id) return;
+        if (item.cover && !(id in songCovers)) songCovers[id] = safeCoverUrl(item.cover);
+        if (!(id in songCovers)) pendingCovers.add(id);
+    });
+    if (pendingCovers.size && !coverTimer) coverTimer = setTimeout(flushCovers, 60);
+}
+
+async function flushCovers() {
+    coverTimer = null;
+    const ids = [...pendingCovers];
+    pendingCovers.clear();
+    for (let i = 0; i < ids.length; i += 50) {
+        const chunk = ids.slice(i, i + 50);
+        try {
+            const { covers } = await getJSON('/api/v1/songs/covers', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ids: chunk }),
+            });
+            for (const [id, url] of Object.entries(covers || {})) {
+                songCovers[id] = safeCoverUrl(url);
+                if (songCovers[id]) applyCover(id, songCovers[id]);
+            }
+        } catch { /* covers are optional — keep the sketch */ }
+    }
+}
+
+function applyCover(id, url) {
+    document.querySelectorAll(`.song-art[data-song-id="${CSS.escape(id)}"]`).forEach(el => {
+        el.outerHTML = coverImg(url, { large: el.dataset.large === '1' });
+    });
+}
 function generateMovieSketch(item) { return generateMasterpieceSketch(item, 'movie'); }
 
 function generateCoursePoster(item, eager = false) {

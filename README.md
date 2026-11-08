@@ -39,6 +39,7 @@ Inkpick is a multi-domain content discovery platform delivering sub-50ms recomme
 - ✨ **More like this** on every item, with a plain-English *“Why this pick?”* (shared genres, same era/franchise, same artist, similar tempo/energy, shared course topics)
 - 📒 **My Sketchbook**: tap ♡ to save movies, songs and courses (kept in your browser)
 - 🔗 **Shareable links**: every item has its own URL, e.g. `/#/movies/1`, `/#/songs/<spotifyId>`
+- 🎨 **Real album covers** for songs via Spotify's public oEmbed (no API key; the first ~1,200 ship pre-cached in `models/song_covers.json`)
 - 🎚️ **Mood mixer**: find songs by energy, danceability and tempo, or pick Chill / Focus / Workout / Party
 - 🆕 **New releases, live from TMDB**: the MovieLens catalog ends in 2023, so Trending / Now Playing / Upcoming, a "New in cinemas" row and search for newer films come straight from TMDB (needs `TMDB_API_KEY`)
 - 🎲 **Surprise me**: a random pick from the current category
@@ -223,6 +224,7 @@ All endpoints live under `/api/v1`. `{domain}` is one of `movies`, `songs`, `cou
 | `GET` | `/item/{domain}/{item_id}` | One item by ID (powers shareable links) |
 | `GET` | `/songs/mood?energy=0.8&danceability=0.7&tempo=128` | 🎚️ Songs closest to a target mood (all params optional) |
 | `GET` | `/suggest/{domain}?q=toy` | 🔎 Instant type-ahead titles (prefix matches first) |
+| `POST` | `/songs/covers` | `{"ids": ["<spotifyId>", …]}` → album cover URLs for up to 50 tracks |
 | `GET` | `/movies/fresh?list=trending` | 🆕 Live movies: `trending`, `now_playing`, `upcoming`, `popular` |
 | `GET` | `/movies/{tmdb_id}/trailer` | 🎞️ Best official YouTube trailer (`null` without `TMDB_API_KEY`) |
 | `GET` | `/tmdb/movie/{tmdb_id}` | Cached TMDB metadata proxy (hides the API key) |
