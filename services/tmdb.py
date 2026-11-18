@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import time
 from typing import Any, Dict, Iterable
 
 import httpx
@@ -35,6 +36,7 @@ class TMDBService:
         self._client: httpx.AsyncClient | None = None
         self._semaphore = asyncio.Semaphore(8)
         self.trailers: Dict[str, Any] = {}   # in-memory trailer cache
+        self._ttl_cache: Dict[str, tuple[float, Any]] = {}  # live lists / searches
 
     # ── Lifecycle ────────────────────────────────────────────────
     def _get_client(self) -> httpx.AsyncClient:
@@ -125,7 +127,9 @@ class TMDBService:
 
     async def enrich(self, items: list) -> list:
         """Attach TMDB metadata under `cached` for every item with a valid tmdbId."""
-        ids = [r["tmdbId"] for r in items if isinstance(r.get("tmdbId"), int) and r["tmdbId"] > 0]
+        # Items from live TMDB lists already carry metadata — don't refetch them
+        ids = [r["tmdbId"] for r in items
+               if isinstance(r.get("tmdbId"), int) and r["tmdbId"] > 0 and not r.get("cached")]
         if ids:
             batch = await self.batch_get_movie_details(ids)
             for r in items:
@@ -163,6 +167,57 @@ class TMDBService:
             self.trailers.clear()
         self.trailers[cache_key] = trailer
         return trailer
+
+    # ── Live endpoints (new releases, search, recommendations) ──────
+    LISTS = {
+        "trending": "trending/movie/week",
+        "now_playing": "movie/now_playing",
+        "upcoming": "movie/upcoming",
+        "popular": "movie/popular",
+    }
+
+    async def _get_json_cached(self, path: str, params: Dict[str, Any], ttl: float) -> Dict[str, Any] | None:
+        """GET a TMDB endpoint with a short in-memory TTL cache. None on failure."""
+        if not self.api_key:
+            return None
+        key = path + "?" + "&".join(f"{k}={v}" for k, v in sorted(params.items()))
+        hit = self._ttl_cache.get(key)
+        if hit and hit[0] > time.monotonic():
+            return hit[1]
+        try:
+            async with self._semaphore:
+                response = await self._get_client().get(
+                    f"{self.base_url}/{path}", params={**params, "api_key": self.api_key}
+                )
+            response.raise_for_status()
+            data = response.json()
+        except Exception:
+            return hit[1] if hit else None   # serve stale data rather than nothing
+        if len(self._ttl_cache) > 500:
+            self._ttl_cache.clear()
+        self._ttl_cache[key] = (time.monotonic() + ttl, data)
+        return data
+
+    async def list_movies(self, kind: str, page: int = 1) -> list[dict]:
+        path = self.LISTS.get(kind)
+        if not path:
+            return []
+        data = await self._get_json_cached(path, {"page": page, "language": "en-US"}, ttl=3 * 3600)
+        return (data or {}).get("results", [])
+
+    async def search_movies(self, query: str) -> list[dict]:
+        data = await self._get_json_cached(
+            "search/movie", {"query": query, "include_adult": "false", "language": "en-US"}, ttl=3600
+        )
+        return (data or {}).get("results", [])
+
+    async def recommendations(self, tmdb_id: int) -> list[dict]:
+        data = await self._get_json_cached(f"movie/{tmdb_id}/recommendations", {"language": "en-US"}, ttl=12 * 3600)
+        results = (data or {}).get("results", [])
+        if not results:
+            data = await self._get_json_cached(f"movie/{tmdb_id}/similar", {"language": "en-US"}, ttl=12 * 3600)
+            results = (data or {}).get("results", [])
+        return results
 
     def update_cache(self, tmdb_id: int, data: dict):
         self.cache[str(tmdb_id)] = data

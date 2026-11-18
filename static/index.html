@@ -22,7 +22,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Kalam:wght@400;700&family=Patrick+Hand&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="/static/css/style.css?v=11">
+    <link rel="stylesheet" href="/static/css/style.css?v=13">
     <link rel="stylesheet" href="/static/css/mascot.css?v=11">
 </head>
 <body>
@@ -63,6 +63,7 @@
                     <ul class="detail-why" id="det-why" hidden></ul>
                     <div class="detail-actions">
                         <button id="det-trailer" class="ghost-btn trailer-btn" type="button" hidden>🎞️ Watch trailer</button>
+                        <button id="det-preview" class="ghost-btn" type="button" aria-pressed="false" hidden>▶ 30s preview</button>
                         <a id="det-play-link" target="_blank" rel="noopener noreferrer" class="play-btn">
                             <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m10 8 6 4-6 4z"/></svg>
                             <span id="det-play-text">Open</span>
@@ -117,6 +118,12 @@
             </div>
         </section>
 
+        <!-- Live new releases (TMDB / Spotify) — both datasets stop in 2023 -->
+        <section id="fresh-row" class="because-row fresh-row" aria-labelledby="fresh-title" hidden>
+            <h2 class="grid-header" id="fresh-title">🆕 New in cinemas</h2>
+            <div id="fresh-results" class="discovery-grid similar-grid"></div>
+        </section>
+
         <!-- "Because you saved ..." personal row -->
         <section id="because" class="because-row" aria-labelledby="because-title" hidden>
             <h2 class="grid-header" id="because-title">Because you saved…</h2>
@@ -165,6 +172,6 @@
         </model-viewer>
     </div>
 
-    <script src="/static/js/app.js?v=13" defer></script>
+    <script src="/static/js/app.js?v=17" defer></script>
 </body>
 </html>

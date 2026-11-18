@@ -32,6 +32,9 @@ class MovieEngine:
         # ── 1. Movie metadata ───────────────────────────────────────
         self.df = pd.read_csv(os.path.join(data_path, "movies_processed.csv"))
         self.df["title_norm"] = self.df["title"].str.lower().str.strip()
+        # "Dark Knight, The (2008)" -> "the dark knight (2008)" so natural queries match
+        self.df["title_alt"] = self.df["title_norm"].str.replace(
+            r"^(.*), (the|a|an)( \(\d{4}\))?$", r"\2 \1\3", regex=True)
         self.df["genres_list"] = self.df["genres"].apply(parse_list_field)
         self.df["genres_norm"] = self.df["genres_list"].apply(lambda gs: {g.lower() for g in gs})
 
@@ -52,6 +55,9 @@ class MovieEngine:
         }
         self.genre_index = {g: np.flatnonzero(m & has_tmdb) for g, m in self.genre_mask.items()}
         self.id_to_idx = {int(m): i for i, m in enumerate(self.df["movieId"])}
+        # TMDB id -> catalog movieId (lets live TMDB results reuse catalog items)
+        valid = self.df[self.df["tmdbId"] > 0]
+        self.tmdb_to_movie = dict(zip(valid["tmdbId"].astype(int), valid["movieId"].astype(int)))
 
         # Discovery pool: movies with valid TMDB IDs (posters)
         self.discover_pool = np.flatnonzero(self.df["tmdbId"].to_numpy() > 0).tolist()
@@ -69,6 +75,9 @@ class MovieEngine:
 
         # ── 3. Row map for vectorized dot products (no Python loop) ──
         self.row_map = build_row_map(self.indptr, self.num_rows)
+        # Popularity proxy: movies with more user tags have more TF-IDF terms
+        self.popularity = np.diff(self.indptr).astype(np.int32)
+        self.df["_row"] = np.arange(len(self.df))
 
         # ── 4. Fuzzy search pool (titles without year) ──────────────
         self._fuzzy_map = {
@@ -88,7 +97,9 @@ class MovieEngine:
             # Genre pills (e.g. "Comedy", "Sci-Fi") search by genre, not title
             hits = self.df.iloc[self.genre_index[q][:limit]]
         else:
-            hits = self.df[self.df["title_norm"].str.contains(q, na=False, regex=False)]
+            mask = (self.df["title_norm"].str.contains(q, na=False, regex=False)
+                    | self.df["title_alt"].str.contains(q, na=False, regex=False))
+            hits = self._rank_title_hits(q, self.df[mask], self.popularity)
         results = [self._format(row) for row in hits.head(limit).to_dict("records")]
 
         suggestion = None
@@ -97,6 +108,22 @@ class MovieEngine:
             if match:
                 suggestion = self._fuzzy_map.get(match)
         return results, suggestion
+
+    @staticmethod
+    def _rank_title_hits(q: str, hits: pd.DataFrame, popularity=None) -> pd.DataFrame:
+        """Exact title (ignoring year/articles) first, then prefix, then substring;
+        most-tagged (popular) first within each group, then newest."""
+        if hits.empty:
+            return hits
+        bare = hits["title_norm"].str.replace(r"\s*\(\d{4}\)$", "", regex=True)
+        # MovieLens writes "Matrix, The" — strip articles at either end
+        bare = bare.str.replace(r", (the|a|an)$", "", regex=True).str.replace(r"^(the|a|an) ", "", regex=True)
+        q_bare = re.sub(r"^(the|a|an) ", "", q)
+        rank = (bare != q_bare).astype(int) + (~bare.str.startswith(q_bare)).astype(int)
+        pop = popularity[hits["_row"].to_numpy()] if popularity is not None else 0
+        order = pd.DataFrame({"rank": rank, "pop": -pop, "year": -hits["release_year"].fillna(0)},
+                             index=hits.index)
+        return hits.loc[order.sort_values(["rank", "pop", "year"], kind="stable").index]
 
     def recommend(self, movie_id: int, top_n: int = 12, genre: str | None = None) -> list[dict]:
         """Vectorized content-based recommendations (O(nnz))."""
